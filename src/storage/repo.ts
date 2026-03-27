@@ -357,7 +357,98 @@ export class SessionRepo {
     `).all(task, limit, offset) as TurnRow[];
   }
 
-  getStatsByTask(task: string) {
+  getTaggedTurns(opts: {
+    tags?: string[];
+    mode?: "all" | "any";
+    from?: string;
+    to?: string;
+    limit?: number;
+    offset?: number;
+  } = {}): (TurnRow & { tags: string; block_input_tokens: number; block_output_tokens: number; block_cost_usd: number })[] {
+    const { tags, mode = "any", from, to, limit = 50, offset = 0 } = opts;
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (tags && tags.length > 0) {
+      const placeholders = tags.map(() => "?").join(",");
+      if (mode === "all" && tags.length > 1) {
+        conditions.push(`t.id IN (
+          SELECT turn_id FROM task_tags WHERE task IN (${placeholders})
+          GROUP BY turn_id HAVING COUNT(DISTINCT task) = ?
+        )`);
+        params.push(...tags, tags.length);
+      } else {
+        conditions.push(`t.id IN (SELECT DISTINCT turn_id FROM task_tags WHERE task IN (${placeholders}))`);
+        params.push(...tags);
+      }
+    } else {
+      conditions.push("t.id IN (SELECT DISTINCT turn_id FROM task_tags)");
+    }
+
+    if (from && to) {
+      conditions.push("t.timestamp >= ? AND t.timestamp <= ?");
+      params.push(from, to);
+    }
+
+    // Only show real user turns (each row = one interaction block)
+    conditions.push("t.is_real_user = 1");
+
+    const where = conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
+    params.push(limit, offset);
+
+    // Aggregate block stats: sum tokens/cost from this turn to the next real user turn
+    return this.db.prepare(`
+      SELECT t.*,
+        (SELECT GROUP_CONCAT(tt2.task, ', ') FROM task_tags tt2 WHERE tt2.turn_id = t.id) as tags,
+        (SELECT COALESCE(SUM(b.input_tokens), 0) FROM turns b
+         WHERE b.session_id = t.session_id AND b.turn_index >= t.turn_index
+           AND b.turn_index < COALESCE(
+             (SELECT MIN(n.turn_index) FROM turns n WHERE n.session_id = t.session_id AND n.turn_index > t.turn_index AND n.is_real_user = 1),
+             999999)
+        ) as block_input_tokens,
+        (SELECT COALESCE(SUM(b.output_tokens), 0) FROM turns b
+         WHERE b.session_id = t.session_id AND b.turn_index >= t.turn_index
+           AND b.turn_index < COALESCE(
+             (SELECT MIN(n.turn_index) FROM turns n WHERE n.session_id = t.session_id AND n.turn_index > t.turn_index AND n.is_real_user = 1),
+             999999)
+        ) as block_output_tokens,
+        (SELECT COALESCE(SUM(b.cost_usd), 0) FROM turns b
+         WHERE b.session_id = t.session_id AND b.turn_index >= t.turn_index
+           AND b.turn_index < COALESCE(
+             (SELECT MIN(n.turn_index) FROM turns n WHERE n.session_id = t.session_id AND n.turn_index > t.turn_index AND n.is_real_user = 1),
+             999999)
+        ) as block_cost_usd
+      FROM turns t
+      ${where}
+      ORDER BY t.timestamp DESC
+      LIMIT ? OFFSET ?
+    `).all(...params) as (TurnRow & { tags: string; block_input_tokens: number; block_output_tokens: number; block_cost_usd: number })[];
+  }
+
+  getTurnBlock(turnId: number): TurnRow[] {
+    const turn = this.db.prepare(`SELECT * FROM turns WHERE id = ?`).get(turnId) as TurnRow | undefined;
+    if (!turn) return [];
+
+    // Find the next real user turn in the same session
+    const nextRealUser = this.db.prepare(`
+      SELECT turn_index FROM turns
+      WHERE session_id = ? AND turn_index > ? AND is_real_user = 1
+      ORDER BY turn_index ASC LIMIT 1
+    `).get(turn.session_id, turn.turn_index) as { turn_index: number } | undefined;
+
+    const maxIndex = nextRealUser ? nextRealUser.turn_index : 999999;
+
+    return this.db.prepare(`
+      SELECT * FROM turns
+      WHERE session_id = ? AND turn_index >= ? AND turn_index < ?
+      ORDER BY turn_index ASC
+    `).all(turn.session_id, turn.turn_index, maxIndex) as TurnRow[];
+  }
+
+  getStatsByTask(task: string, from?: string, to?: string) {
+    const timeFilter = from && to ? " AND t.timestamp >= ? AND t.timestamp <= ?" : "";
+    const params: unknown[] = [task];
+    if (from && to) params.push(from, to);
     return this.db.prepare(`
       SELECT
         COUNT(*) as total_turns,
@@ -369,14 +460,16 @@ export class SessionRepo {
         SUM(t.duration_ms) as total_duration_ms
       FROM turns t
       JOIN task_tags tt ON tt.turn_id = t.id
-      WHERE tt.task = ?
-    `).get(task);
+      WHERE tt.task = ?${timeFilter}
+    `).get(...params);
   }
 
-  getStatsByTasks(tasks: string[], mode: "all" | "any" = "all") {
+  getStatsByTasks(tasks: string[], mode: "all" | "any" = "all", from?: string, to?: string) {
     if (tasks.length === 0) return null;
-    if (tasks.length === 1) return this.getStatsByTask(tasks[0]);
+    if (tasks.length === 1) return this.getStatsByTask(tasks[0], from, to);
     const placeholders = tasks.map(() => "?").join(",");
+    const timeFilter = from && to ? " AND t.timestamp >= ? AND t.timestamp <= ?" : "";
+    const timeParams: unknown[] = from && to ? [from, to] : [];
     if (mode === "any") {
       return this.db.prepare(`
         SELECT
@@ -390,8 +483,8 @@ export class SessionRepo {
         FROM turns t
         WHERE t.id IN (
           SELECT DISTINCT turn_id FROM task_tags WHERE task IN (${placeholders})
-        )
-      `).get(...tasks);
+        )${timeFilter}
+      `).get(...tasks, ...timeParams);
     }
     return this.db.prepare(`
       SELECT
@@ -408,8 +501,8 @@ export class SessionRepo {
         WHERE task IN (${placeholders})
         GROUP BY turn_id
         HAVING COUNT(DISTINCT task) = ?
-      )
-    `).get(...tasks, tasks.length);
+      )${timeFilter}
+    `).get(...tasks, tasks.length, ...timeParams);
   }
 
   listTasks(): { task: string; turn_count: number; first_tagged: string; last_tagged: string }[] {

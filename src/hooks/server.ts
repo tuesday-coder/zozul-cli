@@ -221,8 +221,32 @@ function handleApiRoute(url: string, repo: SessionRepo, res: http.ServerResponse
       return;
     }
     const mode = qs.get("mode") === "any" ? "any" as const : "all" as const;
-    const stats = repo.getStatsByTasks(tags, mode);
+    const from = qs.get("from") ?? undefined;
+    const to = qs.get("to") ?? undefined;
+    const stats = repo.getStatsByTasks(tags, mode, from, to);
     sendJson(res, 200, stats ?? {});
+    return;
+  }
+
+  const turnBlockMatch = path.match(/^\/api\/turns\/(\d+)\/block$/);
+  if (turnBlockMatch) {
+    const turnId = parseInt(turnBlockMatch[1], 10);
+    const block = repo.getTurnBlock(turnId);
+    sendJson(res, 200, block);
+    return;
+  }
+
+  if (path === "/api/tasks/turns") {
+    const qs = new URL(url, "http://x").searchParams;
+    const tagsParam = qs.get("tags") ?? "";
+    const tags = tagsParam ? tagsParam.split(",").map(t => t.trim()).filter(Boolean) : undefined;
+    const mode = qs.get("mode") === "all" ? "all" as const : "any" as const;
+    const from = qs.get("from") ?? undefined;
+    const to = qs.get("to") ?? undefined;
+    const limit = Math.min(200, Math.max(1, parseInt(qs.get("limit") ?? "50", 10)));
+    const offset = Math.max(0, parseInt(qs.get("offset") ?? "0", 10));
+    const turns = repo.getTaggedTurns({ tags, mode, from, to, limit, offset });
+    sendJson(res, 200, turns);
     return;
   }
 
