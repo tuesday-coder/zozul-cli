@@ -347,6 +347,25 @@
   }
   .apply-btn:hover { opacity: 0.85; }
 
+  .tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--text-dim);
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.15s;
+  }
+  .tag-chip:hover { border-color: var(--accent); color: var(--text); }
+  .tag-chip.selected { background: rgba(124,110,240,0.15); border-color: var(--accent); color: var(--accent-light); }
+  .tag-chip input { display: none; }
+
   :not(button)[title] { cursor: help; }
 
   @media (max-width: 800px) {
@@ -404,6 +423,14 @@
       <div class="chart-card full-width"><h3 id="tokens-label">Tokens &amp; Cost (7d)</h3><canvas id="chart-tokens"></canvas></div>
       <div class="chart-card"><h3>Tool Usage</h3><canvas id="chart-tools"></canvas></div>
       <div class="chart-card"><h3>Model Breakdown</h3><canvas id="chart-models"></canvas></div>
+    </div>
+    <div class="panel" id="tasks-panel" style="display:none">
+      <div class="panel-header">
+        <span>Tasks <span id="active-context" style="font-weight:400;font-size:11px;font-family:var(--mono)"></span></span>
+        <input class="panel-filter" id="task-search" placeholder="search tags…" oninput="filterTagChips(this.value)" style="width:160px">
+      </div>
+      <div style="padding:12px 16px;display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border)" id="task-chips"></div>
+      <div id="task-stats-grid" class="stats-grid" style="padding:16px;margin-bottom:0"></div>
     </div>
     <div class="panel">
       <div class="panel-header">
@@ -537,13 +564,15 @@ async function loadDashboard() {
   const minSpinner = new Promise(r => setTimeout(r, 400));
   try {
     const qs = chartQueryString();
-    const [stats, sessionsResp, tokens, cost, tools, models] = await Promise.all([
+    const [stats, sessionsResp, tokens, cost, tools, models, tasks, activeCtx] = await Promise.all([
       fetchJson('/api/stats'),
       fetchJson('/api/sessions?limit=' + SESSIONS_PAGE + '&offset=0'),
       fetchJson('/api/metrics/tokens?' + qs),
       fetchJson('/api/metrics/cost?' + qs),
       fetchJson('/api/metrics/tools'),
       fetchJson('/api/metrics/models'),
+      fetchJson('/api/tasks'),
+      fetchJson('/api/context'),
     ]);
     // Handle both paginated { sessions, total } and legacy plain-array responses
     const sessionsArr = Array.isArray(sessionsResp) ? sessionsResp : sessionsResp.sessions;
@@ -551,6 +580,7 @@ async function loadDashboard() {
     sessionsTotal = Array.isArray(sessionsResp) ? sessionsArr.length : sessionsResp.total;
     sessionsOffset = allSessions.length;
     renderStats(stats);
+    renderTasks(tasks, activeCtx);
     renderSessions(allSessions);
     updateLoadMore();
     renderTokenCostChart(tokens, cost);
@@ -624,6 +654,91 @@ function renderStats(s) {
       '<div class="value">' + c.value + '</div>' +
     '</div>'
   ).join('');
+}
+
+// ── Tasks ──
+
+let allTasks = [];
+let selectedTags = new Set();
+
+async function renderTasks(tasks, activeCtx) {
+  const panel = document.getElementById('tasks-panel');
+  const ctxEl = document.getElementById('active-context');
+
+  if (activeCtx && activeCtx.active) {
+    const tags = Array.isArray(activeCtx.active) ? activeCtx.active : [activeCtx.active];
+    ctxEl.innerHTML = tags.map(t =>
+      '<span style="display:inline-block;background:rgba(124,110,240,0.15);color:var(--accent-light);padding:1px 8px;border-radius:4px;margin-left:4px;font-size:11px">' + escHtml(t) + '</span>'
+    ).join('');
+  } else {
+    ctxEl.textContent = '';
+  }
+
+  if (!tasks.length) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = '';
+  allTasks = tasks;
+  renderTagChips('');
+  await loadTaskStats();
+}
+
+function renderTagChips(search) {
+  const chipsEl = document.getElementById('task-chips');
+  const q = search.toLowerCase();
+  const filtered = q ? allTasks.filter(t => t.task.toLowerCase().includes(q)) : allTasks;
+  chipsEl.innerHTML = filtered.map(t => {
+    const sel = selectedTags.has(t.task) ? ' selected' : '';
+    return '<label class="tag-chip' + sel + '" data-tag="' + escHtml(t.task) + '" onclick="toggleTag(this)">' +
+      escHtml(t.task) + ' <span style="color:var(--text-dim);font-size:10px">(' + t.turn_count + ')</span></label>';
+  }).join('');
+}
+
+function filterTagChips(q) { renderTagChips(q); }
+
+function toggleTag(el) {
+  const tag = el.dataset.tag;
+  if (selectedTags.has(tag)) {
+    selectedTags.delete(tag);
+    el.classList.remove('selected');
+  } else {
+    selectedTags.add(tag);
+    el.classList.add('selected');
+  }
+  loadTaskStats();
+}
+
+async function loadTaskStats() {
+  const grid = document.getElementById('task-stats-grid');
+  const selected = Array.from(selectedTags);
+
+  // If none selected, show union of all tags; if selected, show intersection
+  const tags = selected.length > 0 ? selected : allTasks.map(t => t.task);
+  const mode = selected.length > 0 ? 'all' : 'any';
+  if (tags.length === 0) { grid.innerHTML = ''; return; }
+
+  try {
+    const stats = await fetchJson('/api/tasks/stats?tags=' + tags.map(encodeURIComponent).join(',') + '&mode=' + mode);
+    const label = selected.length === 0 ? 'All tags' : selected.join(' + ');
+    grid.innerHTML = [
+      { label: 'Selected',         value: '<span style="font-size:13px;font-family:var(--mono)">' + escHtml(label) + '</span>' },
+      { label: 'Total Turns',      value: fmtNum(stats.total_turns) },
+      { label: 'User Interventions', value: fmtNum(stats.user_turns), title: 'Number of user messages (prompts, corrections, follow-ups)' },
+      { label: 'Duration',         value: fmtDuration(stats.total_duration_ms), title: 'Total Claude processing time' },
+      { label: 'Input Tokens',     value: fmtNum(stats.total_input_tokens) },
+      { label: 'Output Tokens',    value: fmtNum(stats.total_output_tokens) },
+      { label: 'Cost',             value: fmtCost(stats.total_cost_usd) },
+    ].map(c =>
+      '<div class="stat-card"' + (c.title ? ' title="' + c.title + '"' : '') + '>' +
+        '<div class="label">' + c.label + '</div>' +
+        '<div class="value">' + c.value + '</div>' +
+      '</div>'
+    ).join('');
+  } catch {
+    grid.innerHTML = '<div class="empty">Failed to load task stats</div>';
+  }
 }
 
 // ── Sessions table ──

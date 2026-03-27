@@ -77,14 +77,16 @@ export class SessionRepo {
     // Use RETURNING so we get the correct id on both INSERT and ON CONFLICT UPDATE
     const row = this.db.prepare(`
       INSERT INTO turns (session_id, turn_index, role, timestamp, input_tokens, output_tokens,
-        cache_read_tokens, cache_creation_tokens, cost_usd, duration_ms, model, content_text, tool_calls)
+        cache_read_tokens, cache_creation_tokens, cost_usd, duration_ms, model, content_text, tool_calls, is_real_user)
       VALUES (@session_id, @turn_index, @role, @timestamp, @input_tokens, @output_tokens,
-        @cache_read_tokens, @cache_creation_tokens, @cost_usd, @duration_ms, @model, @content_text, @tool_calls)
+        @cache_read_tokens, @cache_creation_tokens, @cost_usd, @duration_ms, @model, @content_text, @tool_calls, @is_real_user)
       ON CONFLICT(session_id, turn_index) DO UPDATE SET
         content_text = @content_text,
         tool_calls = @tool_calls,
         input_tokens = @input_tokens,
-        output_tokens = @output_tokens
+        output_tokens = @output_tokens,
+        duration_ms = MAX(duration_ms, @duration_ms),
+        is_real_user = @is_real_user
       RETURNING id
     `).get(turn) as { id: number } | undefined;
     return row?.id ?? 0;
@@ -315,5 +317,107 @@ export class SessionRepo {
       ORDER BY timestamp DESC
       LIMIT ?
     `).all(limit) as { event_name: string; attributes: string | null; session_id: string | null; prompt_id: string | null; timestamp: string }[];
+  }
+
+  // ── Task tags ──
+
+  tagTurn(turnId: number, task: string): void {
+    this.db.prepare(`
+      INSERT OR IGNORE INTO task_tags (turn_id, task, tagged_at)
+      VALUES (?, ?, ?)
+    `).run(turnId, task, new Date().toISOString());
+  }
+
+  tagTurnsBatch(turnIds: number[], task: string): void {
+    const stmt = this.db.prepare(`
+      INSERT OR IGNORE INTO task_tags (turn_id, task, tagged_at)
+      VALUES (?, ?, ?)
+    `);
+    const taggedAt = new Date().toISOString();
+    this.db.transaction(() => {
+      for (const turnId of turnIds) stmt.run(turnId, task, taggedAt);
+    })();
+  }
+
+  getTasksForTurn(turnId: number): string[] {
+    const rows = this.db.prepare(`
+      SELECT task FROM task_tags WHERE turn_id = ? ORDER BY tagged_at ASC
+    `).all(turnId) as { task: string }[];
+    return rows.map(r => r.task);
+  }
+
+  getTurnsByTask(task: string, limit = 50, offset = 0): TurnRow[] {
+    return this.db.prepare(`
+      SELECT t.* FROM turns t
+      JOIN task_tags tt ON tt.turn_id = t.id
+      WHERE tt.task = ?
+      ORDER BY t.timestamp DESC
+      LIMIT ? OFFSET ?
+    `).all(task, limit, offset) as TurnRow[];
+  }
+
+  getStatsByTask(task: string) {
+    return this.db.prepare(`
+      SELECT
+        COUNT(*) as total_turns,
+        SUM(t.is_real_user) as user_turns,
+        SUM(t.input_tokens) as total_input_tokens,
+        SUM(t.output_tokens) as total_output_tokens,
+        SUM(t.cache_read_tokens) as total_cache_read_tokens,
+        SUM(t.cost_usd) as total_cost_usd,
+        SUM(t.duration_ms) as total_duration_ms
+      FROM turns t
+      JOIN task_tags tt ON tt.turn_id = t.id
+      WHERE tt.task = ?
+    `).get(task);
+  }
+
+  getStatsByTasks(tasks: string[], mode: "all" | "any" = "all") {
+    if (tasks.length === 0) return null;
+    if (tasks.length === 1) return this.getStatsByTask(tasks[0]);
+    const placeholders = tasks.map(() => "?").join(",");
+    if (mode === "any") {
+      return this.db.prepare(`
+        SELECT
+          COUNT(DISTINCT t.id) as total_turns,
+          SUM(t.is_real_user) as user_turns,
+          SUM(t.input_tokens) as total_input_tokens,
+          SUM(t.output_tokens) as total_output_tokens,
+          SUM(t.cache_read_tokens) as total_cache_read_tokens,
+          SUM(t.cost_usd) as total_cost_usd,
+          SUM(t.duration_ms) as total_duration_ms
+        FROM turns t
+        WHERE t.id IN (
+          SELECT DISTINCT turn_id FROM task_tags WHERE task IN (${placeholders})
+        )
+      `).get(...tasks);
+    }
+    return this.db.prepare(`
+      SELECT
+        COUNT(*) as total_turns,
+        SUM(t.is_real_user) as user_turns,
+        SUM(t.input_tokens) as total_input_tokens,
+        SUM(t.output_tokens) as total_output_tokens,
+        SUM(t.cache_read_tokens) as total_cache_read_tokens,
+        SUM(t.cost_usd) as total_cost_usd,
+        SUM(t.duration_ms) as total_duration_ms
+      FROM turns t
+      WHERE t.id IN (
+        SELECT turn_id FROM task_tags
+        WHERE task IN (${placeholders})
+        GROUP BY turn_id
+        HAVING COUNT(DISTINCT task) = ?
+      )
+    `).get(...tasks, tasks.length);
+  }
+
+  listTasks(): { task: string; turn_count: number; first_tagged: string; last_tagged: string }[] {
+    return this.db.prepare(`
+      SELECT task, COUNT(*) as turn_count,
+        MIN(tagged_at) as first_tagged, MAX(tagged_at) as last_tagged
+      FROM task_tags
+      GROUP BY task
+      ORDER BY last_tagged DESC
+    `).all() as { task: string; turn_count: number; first_tagged: string; last_tagged: string }[];
   }
 }
