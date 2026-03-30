@@ -9,7 +9,6 @@
   },
   "scripts": {
     "build": "./node_modules/.bin/tsc && cp src/dashboard/index.html dist/dashboard/index.html",
-    "prepare": "npm run build",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "test": "vitest run"
