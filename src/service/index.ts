@@ -35,6 +35,9 @@ export function installService(opts: ServiceInstallOptions): ServiceResult {
     ZOZUL_PORT: String(opts.port),
   };
   if (opts.dbPath) env.ZOZUL_DB_PATH = opts.dbPath;
+  if (process.env.ZOZUL_API_URL) env.ZOZUL_API_URL = process.env.ZOZUL_API_URL;
+  if (process.env.ZOZUL_API_KEY) env.ZOZUL_API_KEY = process.env.ZOZUL_API_KEY;
+  if (process.env.ZOZUL_VERBOSE) env.ZOZUL_VERBOSE = process.env.ZOZUL_VERBOSE;
 
   if (platform === "macos") {
     return installLaunchd(env);
@@ -175,7 +178,10 @@ ${envEntries}
 \t<key>RunAtLoad</key>
 \t<true/>
 \t<key>KeepAlive</key>
-\t<true/>
+\t<dict>
+\t\t<key>SuccessfulExit</key>
+\t\t<false/>
+\t</dict>
 \t<key>StandardOutPath</key>
 \t<string>${LOG_PATH}</string>
 \t<key>StandardErrorPath</key>
