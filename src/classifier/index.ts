@@ -256,10 +256,12 @@ function buildPrompt(commit: CommitInfo, turns: TurnRow[]): string {
   lines.push('  "approach": One sentence on the technical approach or strategy used');
   lines.push('  "dead_ends": Array of approaches tried that did not work, with brief reason why');
   lines.push('  "learnings": Array of non-obvious insights, discoveries, or gotchas uncovered during the work');
-  lines.push('  "tags": Array of semantic tags capturing what was touched. Use specific technical terms.');
-  lines.push('          Examples: "sqlite-migration", "timestamp-normalization", "git-hooks", "haiku", "otel"');
-  lines.push('          Avoid generic words: "code", "fix", "work", "session", "claude"');
-  lines.push('          Use as many tags as accurately describe the work — no upper limit.');
+  lines.push('  "tags": Array of high-level semantic tags. Think components, systems, and technologies touched —');
+  lines.push('          not implementation details or one-off actions. Tags should be reusable across commits.');
+  lines.push('          Good: "storage", "classifier", "dashboard", "git-hooks", "sqlite", "otel", "haiku"');
+  lines.push('          Too specific: "truncation-removal", "self-reference-filtering", "circular-prompt-contamination"');
+  lines.push('          Avoid: "code", "fix", "work", "session", "claude", "feature", "refactor"');
+  lines.push('          Aim for 4-8 tags that would apply to similar work in the future.');
   lines.push("");
   lines.push("Return ONLY valid JSON, no markdown fences, no prose before or after:");
   lines.push(`{
@@ -418,7 +420,13 @@ export async function classifyCommit(
   const learnings  = toStrArray(parsed.learnings);
   const tags       = toStrArray(parsed.tags);
 
-  // 5. Store work segment
+  // 5. Write tags to task_tags so they appear in the Tasks panel
+  const turnIds = turns.map(t => t.id);
+  for (const tag of tags) {
+    repo.tagTurnsBatch(turnIds, tag);
+  }
+
+  // 6. Store work segment
   repo.insertWorkSegment({
     commit_sha: commit.sha,
     commit_message: commit.message,
