@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import type { SessionRow, TurnRow, ToolUseRow, HookEventRow, OtelMetricRow, OtelEventRow, TaskTagRow, WorkSegmentRow } from "./db.js";
+import type { SessionRow, TurnRow, ToolUseRow, HookEventRow, OtelMetricRow, OtelEventRow, TaskTagRow, WorkSegmentRow, BlockClassificationRow } from "./db.js";
 
 export class SessionRepo {
   constructor(private db: Database.Database) {}
@@ -670,6 +670,146 @@ export class SessionRepo {
         COUNT(*) as count
       FROM work_segments
       WHERE summary IS NOT NULL
+    `).get() as { total_cost_usd: number; total_input_tokens: number; total_output_tokens: number; count: number };
+  }
+
+  // ── Block classifications ──
+
+  /**
+   * Get unclassified real-user turns (interaction block starts) for a project.
+   * Optionally scoped to a session. Returns up to `limit` rows ordered oldest-first.
+   */
+  getUnclassifiedBlocks(opts: {
+    projectPath?: string;
+    sessionId?: string;
+    limit?: number;
+  } = {}): TurnRow[] {
+    const conditions: string[] = ["t.is_real_user = 1", "t.content_text IS NOT NULL", "t.content_text != ''"];
+    const params: unknown[] = [];
+
+    if (opts.projectPath) {
+      conditions.push("s.project_path = ?");
+      params.push(opts.projectPath);
+    }
+    if (opts.sessionId) {
+      conditions.push("t.session_id = ?");
+      params.push(opts.sessionId);
+    }
+    conditions.push("t.id NOT IN (SELECT turn_id FROM block_classifications)");
+
+    params.push(opts.limit ?? 500);
+
+    return this.db.prepare(`
+      SELECT t.* FROM turns t
+      JOIN sessions s ON s.id = t.session_id
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY t.timestamp ASC
+      LIMIT ?
+    `).all(...params) as TurnRow[];
+  }
+
+  /**
+   * Get the full block of turns starting at a real-user turn, up to the next real-user turn.
+   * Includes all assistant and injected tool-result turns in between.
+   */
+  getBlockTurns(realUserTurnId: number): TurnRow[] {
+    const anchor = this.db.prepare(`SELECT * FROM turns WHERE id = ?`).get(realUserTurnId) as TurnRow | undefined;
+    if (!anchor) return [];
+
+    const next = this.db.prepare(`
+      SELECT turn_index FROM turns
+      WHERE session_id = ? AND turn_index > ? AND is_real_user = 1
+      ORDER BY turn_index ASC LIMIT 1
+    `).get(anchor.session_id, anchor.turn_index) as { turn_index: number } | undefined;
+
+    const maxIndex = next?.turn_index ?? 999999;
+
+    return this.db.prepare(`
+      SELECT * FROM turns
+      WHERE session_id = ? AND turn_index >= ? AND turn_index < ?
+      ORDER BY turn_index ASC
+    `).all(anchor.session_id, anchor.turn_index, maxIndex) as TurnRow[];
+  }
+
+  upsertBlockClassification(row: Omit<BlockClassificationRow, "id">): void {
+    this.db.prepare(`
+      INSERT INTO block_classifications (
+        turn_id, session_id,
+        description, narrative, what_worked, what_failed,
+        type, area, areas_touched,
+        complexity, complexity_reason,
+        agent_performance, agent_performance_reason,
+        turn_count, tool_call_count,
+        files_read, files_written,
+        approx_lines_added, approx_lines_removed,
+        block_cost_usd, commit_sha,
+        classifier_model, classifier_input_tokens, classifier_output_tokens, classifier_cost_usd,
+        created_at
+      ) VALUES (
+        @turn_id, @session_id,
+        @description, @narrative, @what_worked, @what_failed,
+        @type, @area, @areas_touched,
+        @complexity, @complexity_reason,
+        @agent_performance, @agent_performance_reason,
+        @turn_count, @tool_call_count,
+        @files_read, @files_written,
+        @approx_lines_added, @approx_lines_removed,
+        @block_cost_usd, @commit_sha,
+        @classifier_model, @classifier_input_tokens, @classifier_output_tokens, @classifier_cost_usd,
+        @created_at
+      )
+      ON CONFLICT(turn_id) DO UPDATE SET
+        description = @description, narrative = @narrative,
+        what_worked = @what_worked, what_failed = @what_failed,
+        type = @type, area = @area, areas_touched = @areas_touched,
+        complexity = @complexity, complexity_reason = @complexity_reason,
+        agent_performance = @agent_performance, agent_performance_reason = @agent_performance_reason,
+        classifier_model = @classifier_model,
+        classifier_input_tokens = @classifier_input_tokens,
+        classifier_output_tokens = @classifier_output_tokens,
+        classifier_cost_usd = @classifier_cost_usd
+    `).run(row);
+  }
+
+  listBlockClassifications(opts: {
+    sessionId?: string;
+    projectPath?: string;
+    limit?: number;
+    offset?: number;
+  } = {}): BlockClassificationRow[] {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (opts.sessionId) { conditions.push("bc.session_id = ?"); params.push(opts.sessionId); }
+    if (opts.projectPath) {
+      conditions.push("s.project_path = ?");
+      params.push(opts.projectPath);
+    }
+
+    const where = conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
+    params.push(opts.limit ?? 100, opts.offset ?? 0);
+
+    const join = opts.projectPath
+      ? "JOIN turns t ON t.id = bc.turn_id JOIN sessions s ON s.id = t.session_id"
+      : "";
+
+    return this.db.prepare(`
+      SELECT bc.* FROM block_classifications bc ${join}
+      ${where}
+      ORDER BY bc.created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...params) as BlockClassificationRow[];
+  }
+
+  getBlockClassifierSpend(): { total_cost_usd: number; total_input_tokens: number; total_output_tokens: number; count: number } {
+    return this.db.prepare(`
+      SELECT
+        COALESCE(SUM(classifier_cost_usd), 0) as total_cost_usd,
+        COALESCE(SUM(classifier_input_tokens), 0) as total_input_tokens,
+        COALESCE(SUM(classifier_output_tokens), 0) as total_output_tokens,
+        COUNT(*) as count
+      FROM block_classifications
+      WHERE description IS NOT NULL
     `).get() as { total_cost_usd: number; total_input_tokens: number; total_output_tokens: number; count: number };
   }
 

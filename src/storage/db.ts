@@ -143,6 +143,47 @@ function migrate(db: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_work_segments_project ON work_segments(project_path, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS block_classifications (
+      id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+      turn_id                   INTEGER NOT NULL UNIQUE REFERENCES turns(id),
+      session_id                TEXT NOT NULL,
+
+      -- LLM-generated fields
+      description               TEXT,
+      narrative                 TEXT,
+      what_worked               TEXT,
+      what_failed               TEXT,
+      type                      TEXT,
+      area                      TEXT,
+      areas_touched             TEXT,   -- JSON array
+      complexity                INTEGER,
+      complexity_reason         TEXT,
+      agent_performance         INTEGER,
+      agent_performance_reason  TEXT,
+
+      -- Mechanically computed from tool_calls
+      turn_count                INTEGER DEFAULT 0,
+      tool_call_count           INTEGER DEFAULT 0,
+      files_read                TEXT,   -- JSON array
+      files_written             TEXT,   -- JSON array
+      approx_lines_added        INTEGER DEFAULT 0,
+      approx_lines_removed      INTEGER DEFAULT 0,
+      block_cost_usd            REAL DEFAULT 0,
+
+      -- Git attribution
+      commit_sha                TEXT,
+
+      -- Classifier metadata
+      classifier_model          TEXT,
+      classifier_input_tokens   INTEGER DEFAULT 0,
+      classifier_output_tokens  INTEGER DEFAULT 0,
+      classifier_cost_usd       REAL DEFAULT 0,
+      created_at                TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_block_class_session ON block_classifications(session_id);
+    CREATE INDEX IF NOT EXISTS idx_block_class_turn ON block_classifications(turn_id);
   `);
 
   // Additive column migrations — safe to run on existing DBs
@@ -243,6 +284,36 @@ export type TaskTagRow = {
   turn_id: number;
   task: string;
   tagged_at: string;
+};
+
+export type BlockClassificationRow = {
+  id: number;
+  turn_id: number;
+  session_id: string;
+  description: string | null;
+  narrative: string | null;
+  what_worked: string | null;
+  what_failed: string | null;
+  type: string | null;
+  area: string | null;
+  areas_touched: string | null;       // JSON array
+  complexity: number | null;
+  complexity_reason: string | null;
+  agent_performance: number | null;
+  agent_performance_reason: string | null;
+  turn_count: number;
+  tool_call_count: number;
+  files_read: string | null;          // JSON array
+  files_written: string | null;       // JSON array
+  approx_lines_added: number;
+  approx_lines_removed: number;
+  block_cost_usd: number;
+  commit_sha: string | null;
+  classifier_model: string | null;
+  classifier_input_tokens: number;
+  classifier_output_tokens: number;
+  classifier_cost_usd: number;
+  created_at: string;
 };
 
 export type WorkSegmentRow = {
