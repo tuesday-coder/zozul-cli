@@ -1,185 +1,131 @@
-# zozul-cli
+# zozul
 
-Observability for [Claude Code](https://code.claude.com/) — track token usage, costs, turns, and full conversation history. No external services, no Docker, no cloud.
+Observability for [Claude Code](https://code.claude.com/). Track costs, sessions, and conversations across projects.
 
-## What it does
-
-zozul is a single local process that captures everything Claude Code does. Data flows in from three complementary sources and lands in a SQLite database at `~/.zozul/zozul.db`. A built-in web dashboard and JSON API sit on top of that.
-
-| Source | What it provides |
-|---|---|
-| **OTEL receiver** | Token counts, cost (USD), active time, API events, user prompts — streamed from Claude Code every ~60s |
-| **Hooks** | Real-time session lifecycle, tool calls, user prompts — fired synchronously as events happen |
-| **JSONL watcher** | Full turn content, assistant responses, per-turn token detail — read directly from Claude Code's transcript files |
-
-Each source has different strengths. OTEL is the authoritative source for **cost and duration**. JSONL is the only source for **full conversation text**. Hooks provide **real-time signals** and trigger transcript ingestion on session end. The `sessions` table is kept in sync from all three.
+Works locally out of the box. Optionally syncs to a remote backend for persistent storage and team visibility.
 
 ## Quick start
 
 ```bash
-# Install globally from npm
 npm install -g zozul-cli
 
-# Configure Claude Code and install as a background service (recommended)
+# Configure Claude Code and run as a background service
 zozul install --service
 
 # Open the dashboard
 open http://localhost:7890/dashboard
-
-# Use Claude Code normally — data appears automatically
-claude
 ```
 
-Or if you'd rather manage the process yourself:
+That's it. Use Claude Code normally — data appears automatically.
 
-```bash
-zozul install          # Configure Claude Code hooks + OTEL
-zozul serve            # Start the server
-open http://localhost:7890/dashboard
-```
+## What you get
+
+A single local process that captures everything Claude Code does via three sources:
+
+- **OTEL** — cost, tokens, active time. Streamed every ~60s. The authoritative source for spend.
+- **Hooks** — session lifecycle, tool calls, user prompts. Real-time.
+- **JSONL** — full conversation text, assistant responses. Read from Claude Code's transcript files.
+
+All data lands in SQLite at `~/.zozul/zozul.db`. A web dashboard and JSON API sit on top.
 
 ## Dashboard
 
 `http://localhost:7890/dashboard`
 
-Four views, all with time window filtering (7d / 30d / All):
+| View | What it answers |
+|---|---|
+| **Summary** | How much have I spent? Cost chart, project breakdown, totals. |
+| **Tasks** | What did I work on? Groups turns by tag combination, shows cost and time per task. |
+| **Tags** | How much per category? Per-tag stats with drill-down into individual prompts. |
+| **Sessions** | Raw session list. Sortable, filterable, click to see full conversation. |
 
-- **Summary** — total cost, sessions, and tasks at a glance; 30-day cost chart; cost breakdown by project
-- **Tasks** — groups turns by tag combination (e.g. `[API] [Backend] [DB]`), shows process time, cost, and human interventions per group; click to drill into individual turns
-- **Tags** — per-tag stats with drill-down into paginated turns and per-prompt cost
-- **Sessions** — sortable, filterable, paginated session table; click any session for the full conversation with per-turn token counts and expandable tool call inputs/outputs
+All views support time filtering (7d / 30d / All). Auto-refreshes every 10s.
 
-The dashboard auto-detects whether a remote backend is available (via health check) and falls back to the local API transparently. A badge in the header shows "Remote" or "Local".
+When a remote backend is configured, the dashboard auto-detects it via health check and uses it as the data source. Falls back to local if unavailable.
 
-Auto-refresh polls every 10s on the active view.
+## Task tagging
+
+Tag your work so costs are attributed to what you're building:
+
+```bash
+zozul context "auth" "backend"    # Set active tags
+# ... use Claude Code ...
+git commit                         # Tags auto-clear on commit
+```
+
+Tags appear in the Tasks and Tags views. Turns are grouped by their tag combination.
+
+## Remote sync
+
+Optionally push data to a remote backend:
+
+```bash
+# Set in .env or environment
+ZOZUL_API_URL=https://your-backend.example.com
+ZOZUL_API_KEY=your-key
+
+zozul sync
+```
+
+Sync is incremental (watermark-based) and also runs automatically on session end when the service is running. The dashboard switches to the remote API when available.
 
 ## Commands
 
 | Command | Description |
 |---|---|
-| `zozul serve` | Start the server (dashboard, hooks, OTEL receiver, API) on port 7890 |
-| `zozul install` | Configure Claude Code hooks and OTEL in `~/.claude/settings.json` |
-| `zozul install --service` | Configure Claude Code **and** install zozul as a login service (auto-starts) |
-| `zozul install --status` | Show whether the background service is installed and running |
-| `zozul install --restart` | Restart the background service (picks up new builds) |
-| `zozul install --dry-run` | Preview the config that would be installed |
-| `zozul uninstall` | Remove zozul hooks, OTEL config, git hook, and background service |
-| `zozul context <tags...>` | Set active task tags for tagging turns (e.g. `zozul context "UI" "Feature"`) |
-| `zozul context --list` | List all tasks that have been used |
-| `zozul context --clear` | Clear the active task context |
-| `zozul sync` | Sync local data to the remote zozul backend |
-| `zozul sync --dry-run` | Show what would be synced without sending data |
+| `zozul serve` | Start the server on port 7890 |
+| `zozul install` | Configure Claude Code hooks and OTEL |
+| `zozul install --service` | Also install as a background service (auto-starts on login) |
+| `zozul install --status` | Check if the service is running |
+| `zozul install --restart` | Restart the service after code changes |
+| `zozul uninstall` | Remove all hooks, config, and service |
+| `zozul context <tags...>` | Set active task tags |
+| `zozul context --clear` | Clear tags |
+| `zozul sync` | Push local data to remote backend |
 
-## Architecture
+## How it works
 
 ```
-                        Claude Code
-                            |
-              +-------------+-------------+
-              |             |             |
-         OTEL export    Hook POSTs    ~/.claude/projects/
-         (every ~60s)  (real-time)   <project>/<uuid>.jsonl
-              |             |             |
-              v             v             v
-         /v1/metrics    /hook/*      fs.watch (live)
-         /v1/logs           |        zozul ingest (manual)
-              |             |             |
-              |    updateSessionFromOtel  |
-              |             |        persistSession
-              +------+------+------+------+
-                     |
-               SQLite (WAL)
-               ~/.zozul/zozul.db
-                     |
-              +------+------+
-              |             |
-         /dashboard     /api/*
-         (browser)     (JSON)
+Claude Code
+    |
+    +--- OTEL export (every ~60s) ---> /v1/metrics, /v1/logs
+    +--- Hook POSTs (real-time) -----> /hook/*
+    +--- JSONL transcripts ----------> fs.watch
+    |
+    v
+SQLite (~/.zozul/zozul.db)
+    |
+    +--- /dashboard (browser)
+    +--- /api/* (JSON)
+    +--- zozul sync --> remote backend (optional)
 ```
 
-Everything runs in a single process on port 7890.
+Single process on port 7890. macOS uses launchd, Linux uses systemd.
 
-### Data sources and ownership
+### Data ownership
 
-Each field in the `sessions` table has a designated owner:
-
-| Field | Owner | Notes |
+| What | Source | Notes |
 |---|---|---|
-| `id`, `started_at`, `project_path`, `model` | JSONL | Set from transcript filename and content |
-| `total_turns` | JSONL | Count of turns parsed from transcript |
-| `total_cost_usd` | OTEL | JSONL transcripts do not include cost data |
-| `total_duration_ms` | OTEL | Accumulated from `claude_code.active_time.total` |
-| `total_*_tokens` (session level) | OTEL (preferred) | JSONL provides seeds; OTEL accumulates via `MAX()` |
-| `ended_at` | Both | OTEL keeps it current as batches arrive; JSONL sets it at ingest |
-
-The `sessions` upsert uses `MAX()` for all metric fields so OTEL-accumulated values are never clobbered by a JSONL re-ingest that may have lower (or zero) values.
-
-### JSONL watcher
-
-When `zozul serve` starts it:
-
-1. Performs a catch-up pass — ingests all JSONL files found under `~/.claude/projects/`
-2. Watches that directory for changes via `fs.watch` (recursive, FSEvents on macOS)
-3. Debounces per-file at 500ms and calls `ingestSessionFile` on each change
-
-This means starting zozul after Claude Code is already running is fine — all existing turns are recovered immediately and new turns appear within ~500ms of being written.
-
-### OTEL metrics
-
-Claude Code exports OTLP JSON to `http://localhost:7890` on a 60s interval (metrics) and 5s interval (logs). Each batch contains **delta values** for the export window — not cumulative totals. zozul accumulates these into the `sessions` table via `updateSessionFromOtel` on every batch received.
-
-Raw metric rows are also stored in `otel_metrics` and `otel_events` for dashboard charts and event replay.
-
-## Background service
-
-`zozul install --service` installs zozul as a persistent background service:
-
-- **macOS**: writes `~/Library/LaunchAgents/com.zozul.serve.plist` and loads it via `launchctl`. Starts on login, restarts on crash.
-- **Linux**: writes `~/.config/systemd/user/zozul.service` and enables it with `systemctl --user`.
-
-The service bakes in the exact node binary path (nvm-safe) and the script path at install time, so it doesn't depend on shell PATH.
-
-Logs write to `~/.zozul/zozul.log`.
+| Cost | OTEL | JSONL doesn't include cost |
+| Duration | OTEL | Accumulated from active time metrics |
+| Tokens | OTEL (preferred) | JSONL provides initial values, OTEL accumulates |
+| Conversation text | JSONL | Full turns, tool calls, assistant responses |
+| Session events | Hooks | Start, end, stop, tool use |
 
 ## Configuration
 
-Settings via `.env` in the working directory (see `.env.example`) or environment variables:
+Via `.env` or environment variables:
 
 ```bash
-ZOZUL_PORT=7890                      # Server port (default: 7890)
-ZOZUL_DB_PATH=~/.zozul/zozul.db      # Database path
-ZOZUL_VERBOSE=1                      # Log every event to stderr
-OTEL_ENDPOINT=http://localhost:7890  # Where Claude Code sends OTEL
-OTEL_PROTOCOL=http/json              # Must be http/json
-OTEL_LOG_USER_PROMPTS=1              # Include prompt text in OTEL events
-OTEL_LOG_TOOL_DETAILS=1              # Include tool names in OTEL events
+ZOZUL_PORT=7890                  # Default: 7890
+ZOZUL_DB_PATH=~/.zozul/zozul.db # Default: ~/.zozul/zozul.db
+ZOZUL_VERBOSE=1                  # Log all events
+ZOZUL_API_URL=https://...        # Remote backend URL (optional)
+ZOZUL_API_KEY=...                # Remote backend API key (optional)
 ```
-
-CLI flags override `.env` values.
-
-## Data captured
-
-| Data point | Source | Granularity |
-|---|---|---|
-| Token usage (input/output/cache/creation) | OTEL + JSONL | Per-session and per-turn |
-| Cost (USD) | OTEL | Per-session, per-model |
-| Active time | OTEL | Per-session |
-| Turns / API calls | JSONL | Full content and metadata |
-| User prompts | Hooks (`UserPromptSubmit`) + JSONL | Count (aggregate) + full text (per-turn) |
-| Interruptions | Hooks (`Stop`) | Count (aggregate) |
-| Model responses | JSONL only | Full text |
-| Tool calls and results | Hooks + JSONL | Name, input, output |
-| Session lifecycle | Hooks | Start, end, stop events |
 
 ## Requirements
 
 - Node.js 18+
-- npm
-- Claude Code installed (`claude --version`)
+- Claude Code (`claude --version`)
 - Claude Pro, Max, Teams, Enterprise, or API key
-
-## Updating
-
-```bash
-npm install -g zozul-cli
-```
