@@ -6,6 +6,7 @@ import { dashboardHtml, dashboardHtmlWithToggle } from "../dashboard/html.js";
 import { getActiveContext, clearActiveContext } from "../context/index.js";
 import { ZozulApiClient } from "../sync/client.js";
 import { syncSingleSession, runSync } from "../sync/index.js";
+import { tagLatestBlock, tagBlocks } from "../classifier/block-tagger.js";
 
 export interface HookServerOptions {
   port: number;
@@ -132,6 +133,11 @@ async function handleHookEvent(
         if (verbose) log(`  -> transcript ingest failed: ${err}`);
       }
 
+      // Re-segment the full session for clean retrospective tags
+      if (payload.session_id) {
+        tagBlocks(repo, { sessionId: payload.session_id, verbose }).catch(() => {});
+      }
+
       // Sync session immediately, then do a delayed sweep to catch trailing OTEL data
       if (syncClient && payload.session_id) {
         syncSingleSession(repo, syncClient, payload.session_id, { verbose }).catch(() => {});
@@ -139,9 +145,10 @@ async function handleHookEvent(
       }
     }
 
-    // On Stop: sync the current session immediately
-    if (eventName === "Stop" && payload.session_id && syncClient) {
-      syncSingleSession(repo, syncClient, payload.session_id, { verbose }).catch(() => {});
+    // On Stop: sync + tag the latest block in real-time
+    if (eventName === "Stop" && payload.session_id) {
+      if (syncClient) syncSingleSession(repo, syncClient, payload.session_id, { verbose }).catch(() => {});
+      tagLatestBlock(repo, payload.session_id, undefined, verbose).catch(() => {});
     }
 
     // Auto-clear context when Claude runs git commit or git push

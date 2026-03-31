@@ -186,6 +186,97 @@ async function tagSession(
   return { segments: totalSegments, turns: totalTurns, costUsd: totalCost };
 }
 
+// ── Real-time: tag the most recent block in a session ──
+
+function buildSingleBlockPrompt(contextTurns: TurnRow[], targetTurn: TurnRow, existingTags: string[]): string {
+  const lines: string[] = [];
+
+  lines.push("Classify what area of the codebase the following user message is working in.");
+  lines.push("");
+
+  if (existingTags.length > 0) {
+    lines.push("Existing tags in this project (prefer reusing these):");
+    lines.push("  " + existingTags.join(", "));
+    lines.push("");
+  }
+
+  if (contextTurns.length > 0) {
+    lines.push("Recent context (preceding turns):");
+    for (const t of contextTurns) {
+      const text = (t.content_text ?? "").trim().replace(/\n+/g, " ");
+      lines.push(`  - "${text}"`);
+    }
+    lines.push("");
+  }
+
+  const target = (targetTurn.content_text ?? "").trim().replace(/\n+/g, " ");
+  lines.push(`Turn to classify: "${target}"`);
+  lines.push("");
+  lines.push("Return ONLY valid JSON:");
+  lines.push(`{"tags": ["storage"]}`);
+  lines.push("");
+  lines.push("Rules:");
+  lines.push("- tags: high-level product area only — e.g. storage, dashboard, classifier, hooks, sync, cli, otel, parser");
+  lines.push("- NOT techniques: debugging, refactoring, prompt-engineering");
+  lines.push("- 1-3 tags, reuse existing vocabulary where it fits");
+
+  return lines.join("\n");
+}
+
+/**
+ * Tag the most recent real-user turn in a session. Called on every Stop event.
+ * Uses the previous 4 user turns as context to improve accuracy.
+ */
+export async function tagLatestBlock(
+  repo: SessionRepo,
+  sessionId: string,
+  model = "claude-haiku-4-5-20251001",
+  verbose?: boolean,
+): Promise<void> {
+  const allUserTurns = repo.getUserTurnsForSession(sessionId);
+  const userTurns = allUserTurns.filter(
+    t => !(t.content_text ?? "").trimStart().startsWith(CLASSIFIER_MARKER)
+  );
+
+  if (userTurns.length === 0) return;
+
+  const targetTurn = userTurns[userTurns.length - 1];
+  const contextTurns = userTurns.slice(-5, -1); // up to 4 preceding turns
+
+  const existingTags = repo.listTasks().map(t => t.task);
+  const prompt = buildSingleBlockPrompt(contextTurns, targetTurn, existingTags);
+
+  let output: ClaudeOutput;
+  try {
+    output = runClaude(prompt, model);
+  } catch (err) {
+    if (verbose) process.stderr.write(`[tag-latest] claude call failed: ${err}\n`);
+    return;
+  }
+
+  let tags: string[];
+  try {
+    const cleaned = output.result.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("no JSON");
+    const parsed = JSON.parse(match[0]) as { tags?: unknown };
+    tags = Array.isArray(parsed.tags) ? parsed.tags.map(String).filter(Boolean) : [];
+  } catch (err) {
+    if (verbose) process.stderr.write(`[tag-latest] parse failed: ${err}\n`);
+    return;
+  }
+
+  if (tags.length === 0) return;
+
+  const blockTurns = repo.getBlockTurns(targetTurn.id);
+  const ids = blockTurns.map(t => t.id);
+  for (const tag of tags) {
+    repo.tagTurnsBatch(ids, tag);
+  }
+
+  if (verbose) process.stderr.write(`[tag-latest] session ${sessionId.slice(0, 8)}: [${tags.join(", ")}] — ${(targetTurn.content_text ?? "").slice(0, 60)}\n`);
+}
+
 // ── Main entry point ──
 
 export async function tagBlocks(
