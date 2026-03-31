@@ -67,7 +67,7 @@ function runClaude(prompt: string, model: string): ClaudeOutput {
   const result = spawnSync(
     "claude",
     ["-p", prompt, "--model", model, "--output-format", "json"],
-    { encoding: "utf-8", timeout: 60_000, maxBuffer: 4 * 1024 * 1024 }
+    { encoding: "utf-8", timeout: 300_000, maxBuffer: 8 * 1024 * 1024 }
   );
 
   if (result.error) throw result.error;
@@ -129,51 +129,61 @@ async function tagSession(
 
   if (verbose) process.stderr.write(`[tag-blocks] session ${sessionId.slice(0, 8)}: ${userTurns.length} user turns\n`);
 
-  const prompt = buildSegmentationPrompt(userTurns, existingTags);
-
-  let output: ClaudeOutput;
-  try {
-    output = runClaude(prompt, model);
-  } catch (err) {
-    if (verbose) process.stderr.write(`[tag-blocks] claude call failed: ${err}\n`);
-    return { segments: 0, turns: 0, costUsd: 0 };
-  }
-
-  let segments: Segment[];
-  try {
-    segments = parseSegments(output.result);
-  } catch (err) {
-    if (verbose) process.stderr.write(`[tag-blocks] parse failed: ${err}\n`);
-    return { segments: 0, turns: 0, costUsd: 0 };
-  }
-
+  // Process in chunks of 50 to keep prompts manageable
+  const CHUNK_SIZE = 50;
+  let totalSegments = 0;
   let totalTurns = 0;
+  let totalCost = 0;
 
-  for (const seg of segments) {
-    if (seg.tags.length === 0) continue;
+  for (let ci = 0; ci * CHUNK_SIZE < userTurns.length; ci++) {
+    const chunk = userTurns.slice(ci * CHUNK_SIZE, (ci + 1) * CHUNK_SIZE);
+    const prompt = buildSegmentationPrompt(chunk, existingTags);
 
-    // Collect all turn IDs in this segment (user turns + their following block turns)
-    const allTurnIds = new Set<number>();
-    for (const idx of seg.turns) {
-      const userTurn = userTurns[idx - 1];
-      if (!userTurn) continue;
-      const blockTurns = repo.getBlockTurns(userTurn.id);
-      for (const t of blockTurns) allTurnIds.add(t.id);
+    let output: ClaudeOutput;
+    try {
+      output = runClaude(prompt, model);
+    } catch (err) {
+      if (verbose) process.stderr.write(`[tag-blocks] claude call failed: ${err}\n`);
+      continue;
     }
 
-    const ids = Array.from(allTurnIds);
-    for (const tag of seg.tags) {
-      repo.tagTurnsBatch(ids, tag);
+    let segments: Segment[];
+    try {
+      segments = parseSegments(output.result);
+    } catch (err) {
+      if (verbose) process.stderr.write(`[tag-blocks] parse failed: ${err}\n`);
+      continue;
     }
-    totalTurns += ids.length;
 
-    if (verbose) {
-      const preview = seg.turns.map(i => userTurns[i - 1]?.content_text?.slice(0, 40) ?? "?").join(" | ");
-      process.stderr.write(`  [${seg.tags.join(", ")}] turns ${seg.turns.join(",")} — ${preview}\n`);
+    totalCost += output.costUsd;
+
+    for (const seg of segments) {
+      if (seg.tags.length === 0) continue;
+
+      // seg.turns are 1-based indices into this chunk
+      const allTurnIds = new Set<number>();
+      for (const idx of seg.turns) {
+        const userTurn = chunk[idx - 1];
+        if (!userTurn) continue;
+        const blockTurns = repo.getBlockTurns(userTurn.id);
+        for (const t of blockTurns) allTurnIds.add(t.id);
+      }
+
+      const ids = Array.from(allTurnIds);
+      for (const tag of seg.tags) {
+        repo.tagTurnsBatch(ids, tag);
+      }
+      totalTurns += ids.length;
+      totalSegments++;
+
+      if (verbose) {
+        const preview = seg.turns.map(i => chunk[i - 1]?.content_text?.slice(0, 40) ?? "?").join(" | ");
+        process.stderr.write(`  [${seg.tags.join(", ")}] turns ${seg.turns.join(",")} — ${preview}\n`);
+      }
     }
   }
 
-  return { segments: segments.length, turns: totalTurns, costUsd: output.costUsd };
+  return { segments: totalSegments, turns: totalTurns, costUsd: totalCost };
 }
 
 // ── Main entry point ──
