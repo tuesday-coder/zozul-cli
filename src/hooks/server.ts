@@ -173,6 +173,15 @@ async function handleHookEvent(
 function handleApiRoute(url: string, repo: SessionRepo, res: http.ServerResponse): void {
   const path = url.replace(/\?.*$/, "");
 
+  if (path === "/api/task-groups") {
+    const qs = new URL(url, "http://x").searchParams;
+    const from = qs.get("from") ?? undefined;
+    const to = qs.get("to") ?? undefined;
+    const groups = repo.getTaskGroups(from, to);
+    sendJson(res, 200, groups);
+    return;
+  }
+
   if (path === "/api/stats") {
     const stats = repo.getAggregateStats();
     sendJson(res, 200, stats ?? {});

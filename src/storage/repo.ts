@@ -541,6 +541,31 @@ export class SessionRepo {
     `).all() as { task: string; turn_count: number; first_tagged: string; last_tagged: string }[];
   }
 
+  getTaskGroups(from?: string, to?: string): { tags: string; turn_count: number; human_interventions: number; total_duration_ms: number; total_cost_usd: number; last_seen: string }[] {
+    const timeFilter = from && to ? "\n    WHERE t.timestamp >= ? AND t.timestamp <= ?" : "";
+    const params: unknown[] = from && to ? [from, to] : [];
+
+    return this.db.prepare(`
+      WITH turn_tag_sets AS (
+        SELECT turn_id, GROUP_CONCAT(task, '|') as tag_set
+        FROM (SELECT turn_id, task FROM task_tags ORDER BY turn_id, task)
+        GROUP BY turn_id
+      )
+      SELECT
+        COALESCE(tts.tag_set, 'Untagged') as tags,
+        COUNT(DISTINCT t.id) as turn_count,
+        SUM(CASE WHEN t.is_real_user = 1 THEN 1 ELSE 0 END) as human_interventions,
+        COALESCE(SUM(t.duration_ms), 0) as total_duration_ms,
+        COALESCE(SUM(${PROPORTIONAL_COST_SQL}), 0) as total_cost_usd,
+        MAX(t.timestamp) as last_seen
+      FROM turns t
+      LEFT JOIN turn_tag_sets tts ON tts.turn_id = t.id
+      JOIN sessions s ON s.id = t.session_id${timeFilter}
+      GROUP BY COALESCE(tts.tag_set, 'Untagged')
+      ORDER BY last_seen DESC
+    `).all(...params) as { tags: string; turn_count: number; human_interventions: number; total_duration_ms: number; total_cost_usd: number; last_seen: string }[];
+  }
+
   // ── Sync watermarks ──
 
   getSyncWatermark(tableName: string): number {

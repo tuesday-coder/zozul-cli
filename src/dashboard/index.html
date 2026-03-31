@@ -445,8 +445,9 @@
 <div class="container">
   <!-- Summary View -->
   <div id="view-summary" class="view active">
+    <div class="time-selector"></div>
     <div class="stats-grid" id="summary-stats"></div>
-    <div class="chart-card"><h3>Daily Cost (30d)</h3><canvas id="chart-daily-cost"></canvas></div>
+    <div class="chart-card"><h3 id="cost-chart-label">Daily Cost</h3><canvas id="chart-daily-cost"></canvas></div>
     <div class="panel">
       <div class="panel-header"><span>Cost by Project</span></div>
       <ul class="project-list" id="project-breakdown"></ul>
@@ -481,6 +482,7 @@
 
   <!-- Task View -->
   <div id="view-tasks" class="view">
+    <div class="time-selector"></div>
     <div class="panel">
       <div class="panel-header">
         <span>Tasks</span>
@@ -501,6 +503,7 @@
 
   <!-- Tag View -->
   <div id="view-tags" class="view">
+    <div class="time-selector"></div>
     <div class="panel">
       <div class="panel-header">
         <span>Tags</span>
@@ -590,6 +593,7 @@
 let dataSource = 'local';
 let autoRefreshTimer = null;
 let currentView = 'summary';
+let currentTimeWindow = '7d';
 let previousView = 'tasks';
 let allTaskGroups = [];
 let allTagStats = [];
@@ -662,47 +666,6 @@ async function fetchJson(path) {
   return res.json();
 }
 
-// ── Client-side proportional cost ──
-
-const sessionCache = {};
-
-async function fetchSessionCached(sessionId) {
-  if (sessionCache[sessionId]) return sessionCache[sessionId];
-  const session = await fetchJson('/api/sessions/' + sessionId);
-  sessionCache[sessionId] = session;
-  return session;
-}
-
-function proportionalCost(session, turn) {
-  const hasCache = turn.cache_read !== undefined && turn.cache_read !== null;
-  const sessionTotal = (session.total_input_tokens || 0) + (session.total_output_tokens || 0)
-    + (hasCache ? (session.total_cache_read_tokens || 0) + (session.total_cache_creation_tokens || 0) : 0);
-  if (sessionTotal === 0 || !session.total_cost_usd) return 0;
-  const turnTotal = (turn.input || 0) + (turn.output || 0)
-    + (hasCache ? (turn.cache_read || 0) + (turn.cache_creation || 0) : 0);
-  return session.total_cost_usd * turnTotal / sessionTotal;
-}
-
-async function enrichTurnsWithCost(turns) {
-  const ids = [...new Set(turns.map(t => t.session_id).filter(Boolean))];
-  await Promise.all(ids.map(fetchSessionCached));
-  for (const t of turns) {
-    const s = sessionCache[t.session_id];
-    if (!s) continue;
-    t.estimated_cost_usd = proportionalCost(s, {
-      input: t.input_tokens, output: t.output_tokens,
-      cache_read: t.cache_read_tokens, cache_creation: t.cache_creation_tokens,
-    });
-    if (t.block_input_tokens !== undefined) {
-      t.block_cost_usd = proportionalCost(s, {
-        input: t.block_input_tokens, output: t.block_output_tokens,
-        cache_read: t.block_cache_read_tokens, cache_creation: t.block_cache_creation_tokens,
-      });
-    }
-  }
-  return turns;
-}
-
 // ── Formatting ──
 
 function fmtNum(n) { return (n ?? 0).toLocaleString(); }
@@ -765,6 +728,25 @@ function copyText(text) {
   });
 }
 
+function timeQueryString() {
+  if (currentTimeWindow === 'all') return '';
+  const now = new Date();
+  const ms = currentTimeWindow.endsWith('d')
+    ? parseInt(currentTimeWindow) * 86400000
+    : parseInt(currentTimeWindow) * 3600000;
+  const from = new Date(now.getTime() - ms).toISOString();
+  return 'from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(now.toISOString());
+}
+
+function renderTimeSelectors() {
+  document.querySelectorAll('.time-selector').forEach(el => {
+    el.innerHTML = ['7d', '30d', 'all'].map(w =>
+      '<button class="time-btn' + (w === currentTimeWindow ? ' active' : '') + '" data-window="' + w + '">' +
+      (w === 'all' ? 'All' : w) + '</button>'
+    ).join('');
+  });
+}
+
 // ── Navigation ──
 
 function showView(name) {
@@ -801,6 +783,14 @@ document.addEventListener('keydown', e => {
 });
 
 document.addEventListener('click', e => {
+  const btn = e.target.closest('.time-btn');
+  if (btn) {
+    currentTimeWindow = btn.dataset.window;
+    renderTimeSelectors();
+    loadViewData(currentView);
+    return;
+  }
+
   const th = e.target.closest('th.sortable');
   if (th) {
     const [table, key] = th.dataset.sort.split(':');
@@ -841,11 +831,14 @@ function sortData(arr, state) {
 
 async function loadSummary() {
   try {
+    const timeQs = timeQueryString();
+    const timeParam = timeQs ? '?' + timeQs : '';
+    const timeSep = timeQs ? '&' + timeQs : '';
     const [stats, tasks, costSeries, sessionsResp] = await Promise.all([
-      fetchJson('/api/stats'),
+      fetchJson('/api/stats' + timeParam),
       fetchJson('/api/tasks'),
-      fetchJson('/api/metrics/cost?range=30d'),
-      fetchJson('/api/sessions?limit=500&offset=0'),
+      fetchJson('/api/metrics/cost?range=' + (currentTimeWindow === 'all' ? '90d' : currentTimeWindow)),
+      fetchJson('/api/sessions?limit=500&offset=0' + timeSep),
     ]);
     renderSummaryStats({
       totalCost: stats.total_cost_usd ?? 0,
@@ -861,6 +854,8 @@ async function loadSummary() {
 }
 
 function renderDailyCostChart(costData) {
+  const label = document.getElementById('cost-chart-label');
+  if (label) label.textContent = 'Daily Cost (' + (currentTimeWindow === 'all' ? '90d' : currentTimeWindow) + ')';
   if (!costData || !costData.length) return;
   const labels = costData.map(d => {
     const dt = new Date(d.timestamp);
@@ -950,64 +945,10 @@ function renderSummaryStats(s) {
 
 async function loadTasks() {
   try {
-    const [stats, tasks] = await Promise.all([
-      fetchJson('/api/stats'),
-      fetchJson('/api/tasks'),
-    ]);
-    if (!tasks.length) { allTaskGroups = []; renderTaskTable([]); return; }
-
-    // Discover tag combinations by sampling one turn per tag
-    const samples = await Promise.all(
-      tasks.map(t => fetchJson('/api/tasks/turns?tags=' + encodeURIComponent(t.task) + '&mode=any&limit=1')
-        .then(turns => turns[0]?.tags || t.task)
-        .catch(() => t.task)
-      )
-    );
-    // Deduplicate: normalize each combo to sorted pipe-separated
-    const combos = [...new Set(samples.map(s => s.split(', ').sort().join('|')))];
-
-    // Fetch stats for each unique combo
-    const comboStats = await Promise.all(
-      combos.map(combo => {
-        const tags = combo.split('|');
-        const qs = 'tags=' + tags.map(encodeURIComponent).join(',') + '&mode=all';
-        return fetchJson('/api/tasks/stats?' + qs)
-          .then(s => ({ ...s, tags: combo }))
-          .catch(() => ({ tags: combo, total_turns: 0, user_turns: 0, total_duration_ms: 0, total_cost_usd: 0 }));
-      })
-    );
-
-    let taskGroups = comboStats.map(s => ({
-      tags: s.tags,
-      turn_count: s.total_turns ?? 0,
-      human_interventions: s.user_turns ?? 0,
-      total_duration_ms: s.total_duration_ms ?? 0,
-      total_cost_usd: s.total_cost_usd ?? 0,
-      last_seen: s.last_seen ?? null,
-    }));
-
-    // Add cost gap to the Untagged row so task costs sum to total
-    const attributedCost = taskGroups.reduce((s, g) => s + (g.total_cost_usd || 0), 0);
-    const totalCost = stats.total_cost_usd || 0;
-    const gap = totalCost - attributedCost;
-    if (gap > 0.01) {
-      const untagged = taskGroups.find(g => g.tags === 'Untagged');
-      if (untagged) {
-        untagged.total_cost_usd = (untagged.total_cost_usd || 0) + gap;
-      } else {
-        taskGroups.push({
-          tags: 'Untagged',
-          turn_count: 0,
-          human_interventions: 0,
-          total_duration_ms: 0,
-          total_cost_usd: gap,
-          last_seen: null,
-        });
-      }
-    }
-
-    allTaskGroups = taskGroups;
-    renderTaskTable(sortData(taskGroups, sortState.tasks));
+    const timeQs = timeQueryString();
+    const groups = await fetchJson('/api/task-groups' + (timeQs ? '?' + timeQs : ''));
+    allTaskGroups = groups;
+    renderTaskTable(sortData(groups, sortState.tasks));
   } catch (e) {
     console.error('tasks load failed', e);
   }
@@ -1072,7 +1013,7 @@ async function showTaskDetail(tagSet) {
       fetchJson('/api/tasks/stats?' + qs),
       fetchJson('/api/tasks/turns?' + qs + '&limit=' + PAGE_SIZE + '&offset=0'),
     ]);
-    const turns = await enrichTurnsWithCost(rawTurns);
+    const turns = rawTurns;
 
     statsEl.innerHTML = [
       { label: 'Task', value: '<span style="font-size:14px">' + pills + '</span>' },
@@ -1126,14 +1067,14 @@ function renderTaskDetailTurns(turns) {
 async function taskDetailNext() {
   taskDetailOffset += PAGE_SIZE;
   const qs = 'tags=' + taskDetailTags.map(encodeURIComponent).join(',') + '&mode=all&limit=' + PAGE_SIZE + '&offset=' + taskDetailOffset;
-  const turns = await enrichTurnsWithCost(await fetchJson('/api/tasks/turns?' + qs));
+  const turns = await fetchJson('/api/tasks/turns?' + qs);
   renderTaskDetailTurns(turns);
 }
 
 async function taskDetailPrev() {
   taskDetailOffset = Math.max(0, taskDetailOffset - PAGE_SIZE);
   const qs = 'tags=' + taskDetailTags.map(encodeURIComponent).join(',') + '&mode=all&limit=' + PAGE_SIZE + '&offset=' + taskDetailOffset;
-  const turns = await enrichTurnsWithCost(await fetchJson('/api/tasks/turns?' + qs));
+  const turns = await fetchJson('/api/tasks/turns?' + qs);
   renderTaskDetailTurns(turns);
 }
 
@@ -1141,13 +1082,17 @@ async function taskDetailPrev() {
 
 async function loadTags() {
   try {
+    const timeQs = timeQueryString();
     const tasks = await fetchJson('/api/tasks');
     if (!tasks.length) { allTagStats = []; renderTagTable([]); return; }
     const statsList = await Promise.all(
-      tasks.map(t => fetchJson('/api/tasks/stats?tags=' + encodeURIComponent(t.task) + '&mode=any')
-        .then(s => ({ ...s, tag: t.task, last_seen: t.last_tagged }))
-        .catch(() => ({ tag: t.task, turn_count: t.turn_count, human_interventions: 0, total_duration_ms: 0, total_cost_usd: 0, last_seen: t.last_tagged }))
-      )
+      tasks.map(t => {
+        let qs = 'tags=' + encodeURIComponent(t.task) + '&mode=any';
+        if (timeQs) qs += '&' + timeQs;
+        return fetchJson('/api/tasks/stats?' + qs)
+          .then(s => ({ ...s, tag: t.task, last_seen: t.last_tagged }))
+          .catch(() => ({ tag: t.task, turn_count: t.turn_count, human_interventions: 0, total_duration_ms: 0, total_cost_usd: 0, last_seen: t.last_tagged }));
+      })
     );
     allTagStats = statsList.map(s => ({
       tag: s.tag,
@@ -1197,7 +1142,7 @@ async function showTagDetail(tagName) {
       fetchJson('/api/tasks/stats?' + tagQs),
       fetchJson('/api/tasks/turns?' + tagQs + '&limit=' + PAGE_SIZE + '&offset=0'),
     ]);
-    const turns = await enrichTurnsWithCost(rawTurns);
+    const turns = rawTurns;
 
     statsEl.innerHTML = [
       { label: 'Tag', value: '<span class="tag-pill" style="font-size:14px;padding:4px 12px">' + escHtml(tagName) + '</span>' },
@@ -1250,14 +1195,14 @@ function renderTagDetailTurns(turns) {
 async function tagDetailNext() {
   tagDetailOffset += PAGE_SIZE;
   const tagQs = 'tags=' + encodeURIComponent(tagDetailName) + '&mode=any';
-  const turns = await enrichTurnsWithCost(await fetchJson('/api/tasks/turns?' + tagQs + '&limit=' + PAGE_SIZE + '&offset=' + tagDetailOffset));
+  const turns = await fetchJson('/api/tasks/turns?' + tagQs + '&limit=' + PAGE_SIZE + '&offset=' + tagDetailOffset));
   renderTagDetailTurns(turns);
 }
 
 async function tagDetailPrev() {
   tagDetailOffset = Math.max(0, tagDetailOffset - PAGE_SIZE);
   const tagQs = 'tags=' + encodeURIComponent(tagDetailName) + '&mode=any';
-  const turns = await enrichTurnsWithCost(await fetchJson('/api/tasks/turns?' + tagQs + '&limit=' + PAGE_SIZE + '&offset=' + tagDetailOffset));
+  const turns = await fetchJson('/api/tasks/turns?' + tagQs + '&limit=' + PAGE_SIZE + '&offset=' + tagDetailOffset));
   renderTagDetailTurns(turns);
 }
 
@@ -1274,7 +1219,7 @@ async function showTurnBlock(turnId, returnTo) {
   statsEl.innerHTML = '<div class="stat-card" style="grid-column:1/-1"><div class="label">Loading...</div></div>';
   content.innerHTML = '';
 
-  const block = await enrichTurnsWithCost(await fetchJson('/api/turns/' + turnId + '/block'));
+  const block = await fetchJson('/api/turns/' + turnId + '/block');
   if (!block.length) { content.innerHTML = '<div class="empty">No data</div>'; return; }
 
   const totalIn = block.reduce((s, t) => s + (t.input_tokens || 0), 0);
@@ -1515,6 +1460,7 @@ function scheduleAutoRefresh() {
 
 // ── Init ──
 
+renderTimeSelectors();
 detectDataSource().then(() => loadDashboard()).then(scheduleAutoRefresh);
 </script>
 </body>
