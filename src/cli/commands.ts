@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { createRequire } from "node:module";
 import { getDb } from "../storage/db.js";
 import { SessionRepo } from "../storage/repo.js";
 import { createHookServer } from "../hooks/server.js";
@@ -11,6 +12,9 @@ import { getActiveContext, setActiveContext, clearActiveContext } from "../conte
 import { installGitHook, uninstallGitHook } from "../hooks/git.js";
 import { runSync } from "../sync/index.js";
 import { ZozulApiClient } from "../sync/client.js";
+
+const require = createRequire(import.meta.url);
+const { version: PKG_VERSION } = require("../../package.json");
 
 function envPort(): string {
   return process.env.ZOZUL_PORT ?? "7890";
@@ -28,13 +32,108 @@ function envDbPath(): string | undefined {
   return process.env.ZOZUL_DB_PATH || undefined;
 }
 
+interface InstallOpts {
+  port: number;
+  otelEndpoint?: string;
+  otelProtocol?: string;
+  hooks?: boolean;
+  otel?: boolean;
+}
+
+function doInstall(opts: InstallOpts): void {
+  if (opts.hooks !== false) {
+    const result = installHooksToSettings({ port: opts.port });
+    console.log(`Hooks installed to ${result.path}`);
+    if (result.merged) console.log("  (merged with existing hooks)");
+  }
+
+  if (opts.otel !== false) {
+    const result = installOtelToSettings({
+      endpoint: opts.otelEndpoint ?? envOtelEndpoint(),
+      protocol: (opts.otelProtocol ?? envOtelProtocol()) as "grpc" | "http/json" | "http/protobuf",
+    });
+    console.log(`OTEL config installed to ${result.path}`);
+  }
+
+  const gitResult = installGitHook();
+  if (gitResult) {
+    if (gitResult.created) {
+      console.log(`Git post-commit hook installed: ${gitResult.path}`);
+      console.log("  (auto-clears task context on commit)");
+    } else {
+      console.log("Git post-commit hook already installed.");
+    }
+  }
+}
+
+interface ServeOpts {
+  port: number;
+  verbose?: boolean;
+}
+
+function doServe(opts: ServeOpts): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const db = getDb(envDbPath());
+    const repo = new SessionRepo(db);
+
+    const apiUrl = process.env.ZOZUL_API_URL;
+    const apiKey = process.env.ZOZUL_API_KEY;
+    const syncClient = apiUrl && apiKey ? new ZozulApiClient({ apiUrl, apiKey }) : undefined;
+
+    const server = createHookServer({ port: opts.port, repo, verbose: opts.verbose ?? false, syncClient });
+
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE") {
+        console.error(`Port ${opts.port} is already in use. Is zozul already running?`);
+        console.error("  Check with: lsof -ti :" + opts.port);
+        console.error("  Or use a different port: zozul serve -p <port>");
+        db.close();
+        process.exit(0);
+      }
+      reject(err);
+    });
+
+    server.listen(opts.port, async () => {
+      console.log(`zozul listening on http://localhost:${opts.port}`);
+      console.log(`  Dashboard:     http://localhost:${opts.port}/dashboard`);
+      console.log(`  Hooks:         http://localhost:${opts.port}/hook/<event>`);
+      console.log(`  OTLP receiver: http://localhost:${opts.port}/v1/metrics & /v1/logs`);
+      console.log(`  API:           http://localhost:${opts.port}/api/*`);
+      console.log("\nPress Ctrl+C to stop.\n");
+
+      const stopWatcher = await watchSessionFiles({ repo, verbose: opts.verbose ?? false, catchUp: true });
+
+      if (syncClient) {
+        if (opts.verbose) console.log("  Remote sync: enabled");
+        runSync(repo, syncClient, { verbose: opts.verbose ?? false }).catch(() => {});
+      }
+
+      process.on("SIGINT", () => {
+        stopWatcher();
+        server.close();
+        db.close();
+        process.exit(0);
+      });
+    });
+  });
+}
+
 export function buildCli(): Command {
   const program = new Command();
 
   program
     .name("zozul")
     .description("Observability for Claude Code — track tokens, costs, turns, and conversations")
-    .version("0.1.0");
+    .version(PKG_VERSION)
+    .option("-p, --port <port>", "Port to listen on", envPort())
+    .option("-v, --verbose", "Print events to stderr as they arrive")
+    .action(async (opts) => {
+      const port = parseInt(opts.port, 10);
+      console.log("Installing hooks and starting zozul...\n");
+      doInstall({ port });
+      console.log("");
+      await doServe({ port, verbose: opts.verbose || envVerbose() });
+    });
 
   program
     .command("serve")
@@ -43,49 +142,7 @@ export function buildCli(): Command {
     .option("-v, --verbose", "Print events to stderr as they arrive")
     .action(async (opts) => {
       const port = parseInt(opts.port, 10);
-      const verbose = opts.verbose || envVerbose();
-      const db = getDb(envDbPath());
-      const repo = new SessionRepo(db);
-
-      const apiUrl = process.env.ZOZUL_API_URL;
-      const apiKey = process.env.ZOZUL_API_KEY;
-      const syncClient = apiUrl && apiKey ? new ZozulApiClient({ apiUrl, apiKey }) : undefined;
-
-      const server = createHookServer({ port, repo, verbose, syncClient });
-
-      server.on("error", (err: NodeJS.ErrnoException) => {
-        if (err.code === "EADDRINUSE") {
-          console.error(`Port ${port} is already in use. Is zozul already running?`);
-          console.error("  Check with: lsof -ti :" + port);
-          db.close();
-          process.exit(0); // clean exit so launchd/systemd won't respawn
-        }
-        throw err;
-      });
-
-      server.listen(port, async () => {
-        console.log(`zozul listening on http://localhost:${port}`);
-        console.log(`  Dashboard:     http://localhost:${port}/dashboard`);
-        console.log(`  Hooks:         http://localhost:${port}/hook/<event>`);
-        console.log(`  OTLP receiver: http://localhost:${port}/v1/metrics & /v1/logs`);
-        console.log(`  API:           http://localhost:${port}/api/*`);
-        console.log("\nPress Ctrl+C to stop.\n");
-
-        const stopWatcher = await watchSessionFiles({ repo, verbose, catchUp: true });
-
-        // Catch-up sync on start, then sync after every Stop/SessionEnd (wired in server)
-        if (syncClient) {
-          if (verbose) console.log("  Remote sync: enabled");
-          runSync(repo, syncClient, { verbose }).catch(() => {});
-        }
-
-        process.on("SIGINT", () => {
-          stopWatcher();
-          server.close();
-          db.close();
-          process.exit(0);
-        });
-      });
+      await doServe({ port, verbose: opts.verbose || envVerbose() });
     });
 
   program
@@ -128,19 +185,13 @@ export function buildCli(): Command {
         return;
       }
 
-      if (opts.hooks !== false) {
-        const result = installHooksToSettings({ port });
-        console.log(`Hooks installed to ${result.path}`);
-        if (result.merged) console.log("  (merged with existing hooks)");
-      }
-
-      if (opts.otel !== false) {
-        const result = installOtelToSettings({
-          endpoint: opts.otelEndpoint,
-          protocol: opts.otelProtocol,
-        });
-        console.log(`OTEL config installed to ${result.path}`);
-      }
+      doInstall({
+        port,
+        otelEndpoint: opts.otelEndpoint,
+        otelProtocol: opts.otelProtocol,
+        hooks: opts.hooks,
+        otel: opts.otel,
+      });
 
       if (opts.service) {
         try {
@@ -154,16 +205,6 @@ export function buildCli(): Command {
       } else {
         console.log("\nDone. Start the server with: zozul serve");
         console.log("Or install as a background service with: zozul install --service");
-      }
-
-      const gitResult = installGitHook();
-      if (gitResult) {
-        if (gitResult.created) {
-          console.log(`Git post-commit hook installed: ${gitResult.path}`);
-          console.log("  (auto-clears task context on commit)");
-        } else {
-          console.log("Git post-commit hook already installed.");
-        }
       }
 
       console.log("Launch Claude Code normally with: claude");

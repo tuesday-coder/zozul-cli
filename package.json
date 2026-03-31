@@ -15,7 +15,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/tuesday-coder/zozul-cli.git"
+    "url": "git+https://github.com/zozul-ai/zozul-cli.git"
   },
   "keywords": [
     "claude-code",
@@ -26,9 +26,9 @@
   "author": "",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/tuesday-coder/zozul-cli/issues"
+    "url": "https://github.com/zozul-ai/zozul-cli/issues"
   },
-  "homepage": "https://github.com/tuesday-coder/zozul-cli#readme",
+  "homepage": "https://github.com/zozul-ai/zozul-cli#readme",
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/exporter-logs-otlp-grpc": "^0.213.0",
