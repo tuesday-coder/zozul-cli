@@ -42,13 +42,16 @@ open http://localhost:7890/dashboard
 
 `http://localhost:7890/dashboard`
 
-- **Stats bar** — sessions, user prompts, interruptions, tokens, and cost at a glance
-- **Token usage chart** — daily input/output/cache token trends with time range controls
-- **Cost chart** — daily spend
-- **Tool usage** — which tools Claude uses most
-- **Model breakdown** — cost and tokens per model
-- **Sessions table** — paginated (Load More), filterable; click any session for the full conversation with per-turn token counts, expandable tool call inputs/outputs
-- **Auto-refresh** — dashboard polls every 10s automatically; click the Auto button to refresh immediately
+Four views, all with time window filtering (7d / 30d / All):
+
+- **Summary** — total cost, sessions, and tasks at a glance; 30-day cost chart; cost breakdown by project
+- **Tasks** — groups turns by tag combination (e.g. `[API] [Backend] [DB]`), shows process time, cost, and human interventions per group; click to drill into individual turns
+- **Tags** — per-tag stats with drill-down into paginated turns and per-prompt cost
+- **Sessions** — sortable, filterable, paginated session table; click any session for the full conversation with per-turn token counts and expandable tool call inputs/outputs
+
+The dashboard auto-detects whether a remote backend is available (via health check) and falls back to the local API transparently. A badge in the header shows "Remote" or "Local".
+
+Auto-refresh polls every 10s on the active view.
 
 ## Commands
 
