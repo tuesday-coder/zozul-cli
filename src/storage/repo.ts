@@ -816,6 +816,33 @@ export class SessionRepo {
     `).get() as { total_cost_usd: number; total_input_tokens: number; total_output_tokens: number; count: number };
   }
 
+  getUserTurnsForSession(sessionId: string): TurnRow[] {
+    return this.db.prepare(`
+      SELECT * FROM turns
+      WHERE session_id = ? AND is_real_user = 1 AND content_text IS NOT NULL AND content_text != ''
+      ORDER BY turn_index ASC
+    `).all(sessionId) as TurnRow[];
+  }
+
+  getSessionsForProject(projectPath: string): { id: string }[] {
+    // Also query the encoded-decoded variant to handle the zozul-cli → zozul/cli encoding issue
+    const alt = projectPath.replace(/\//g, "-").replace(/-/g, "/");
+    const paths = alt !== projectPath ? [projectPath, alt] : [projectPath];
+    const placeholders = paths.map(() => "?").join(",");
+    return this.db.prepare(
+      `SELECT id FROM sessions WHERE project_path IN (${placeholders}) ORDER BY started_at ASC`
+    ).all(...paths) as { id: string }[];
+  }
+
+  getSessionsWithUserTurns(): { id: string }[] {
+    return this.db.prepare(`
+      SELECT DISTINCT s.id FROM sessions s
+      JOIN turns t ON t.session_id = s.id
+      WHERE t.is_real_user = 1
+      ORDER BY s.started_at ASC
+    `).all() as { id: string }[];
+  }
+
   getTurnLookup(): Map<number, { session_id: string; turn_index: number }> {
     const rows = this.db.prepare(
       `SELECT id, session_id, turn_index FROM turns`

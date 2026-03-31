@@ -1363,7 +1363,9 @@ async function loadWorkLog() {
     const learnings  = s.learnings  ? JSON.parse(s.learnings)  : [];
     const components = s.components ? JSON.parse(s.components) : [];
 
-    const tagHtml = tags.map(t => `<span class="tag-chip" style="cursor:default">${escHtml(t)}</span>`).join('');
+    const tagHtml = tags.length > 0
+      ? `<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">${tags.map(t => `<span class="tag-chip" style="cursor:default">${escHtml(t)}</span>`).join('')}</div>`
+      : '';
     const filesHtml = files.length > 0
       ? `<span title="${escHtml(files.join('\n'))}">${files.length} file${files.length !== 1 ? 's' : ''} changed</span>`
       : '';
@@ -1400,8 +1402,8 @@ async function loadWorkLog() {
           <span>${s.turn_count} turns</span>
           ${filesHtml}
           ${componentsHtml}
-          ${tagHtml}
         </div>
+        ${tagHtml}
         ${narrativeHtml}
         ${approachHtml}
         ${deadEndsHtml}

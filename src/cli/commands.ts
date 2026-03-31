@@ -12,6 +12,7 @@ import { installGitHook, uninstallGitHook } from "../hooks/git.js";
 import { runSync } from "../sync/index.js";
 import { ZozulApiClient } from "../sync/client.js";
 import { classifyCommit } from "../classifier/index.js";
+import { tagBlocks } from "../classifier/block-tagger.js";
 
 function envPort(): string {
   return process.env.ZOZUL_PORT ?? "7890";
@@ -324,6 +325,49 @@ export function buildCli(): Command {
         }
       } catch (err) {
         console.error(`Classification failed: ${err instanceof Error ? err.message : err}`);
+        process.exit(1);
+      } finally {
+        db.close();
+      }
+    });
+
+  program
+    .command("tag-blocks")
+    .description("Tag interaction blocks within sessions using LLM-identified work segments")
+    .option("--cwd <path>", "Scope to the project at this directory")
+    .option("--session <id>", "Tag a specific session only")
+    .option("--model <model>", "Claude model to use", "claude-haiku-4-5-20251001")
+    .option("-v, --verbose", "Print detailed progress")
+    .action(async (opts) => {
+      const verbose = opts.verbose || envVerbose();
+      const db = getDb(envDbPath());
+      const repo = new SessionRepo(db);
+
+      let projectPath: string | undefined;
+      if (opts.cwd) {
+        projectPath = repo.resolveProjectPath(opts.cwd);
+      } else if (!opts.session) {
+        // Default to current git repo root
+        try {
+          const { execSync } = await import("node:child_process");
+          const cwd = execSync("git rev-parse --show-toplevel", { encoding: "utf-8" }).trim();
+          projectPath = repo.resolveProjectPath(cwd);
+        } catch { /* not a git repo — tag all */ }
+      }
+
+      if (verbose && projectPath) console.log(`Tagging blocks for project: ${projectPath}`);
+
+      try {
+        const result = await tagBlocks(repo, {
+          projectPath,
+          sessionId: opts.session,
+          model: opts.model,
+          verbose,
+        });
+        console.log(`Tagged ${result.segments} segments across ${result.sessions} session(s), ${result.turns} turns`);
+        if (result.costUsd > 0) console.log(`  Classifier cost: $${result.costUsd.toFixed(5)}`);
+      } catch (err) {
+        console.error(`tag-blocks failed: ${err instanceof Error ? err.message : err}`);
         process.exit(1);
       } finally {
         db.close();
