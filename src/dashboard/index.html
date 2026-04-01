@@ -454,6 +454,7 @@
 <div class="container">
   <!-- Summary View -->
   <div id="view-summary" class="view active">
+    <div class="time-selector"></div>
     <div class="stats-grid" id="summary-stats"></div>
     <div class="chart-card"><h3>Daily Cost (30d)</h3><canvas id="chart-daily-cost"></canvas></div>
     <div class="panel">
@@ -524,6 +525,7 @@
 
   <!-- Task View -->
   <div id="view-tasks" class="view">
+    <div class="time-selector"></div>
     <div class="panel">
       <div class="panel-header">
         <span>Tasks</span>
@@ -544,6 +546,7 @@
 
   <!-- Tag View -->
   <div id="view-tags" class="view">
+    <div class="time-selector"></div>
     <div class="panel">
       <div class="panel-header">
         <span>Tags</span>
@@ -824,6 +827,15 @@ function timeQueryString() {
   return 'from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(now.toISOString());
 }
 
+function renderTimeSelectors() {
+  document.querySelectorAll('.time-selector').forEach(el => {
+    el.innerHTML = ['7d', '30d', 'all'].map(w =>
+      '<button class="time-btn' + (w === currentTimeWindow ? ' active' : '') + '" data-window="' + w + '">' +
+      (w === 'all' ? 'All' : w) + '</button>'
+    ).join('');
+  });
+}
+
 // ── Navigation ──
 
 function showView(name) {
@@ -860,6 +872,14 @@ document.addEventListener('keydown', e => {
 });
 
 document.addEventListener('click', e => {
+  const timeBtn = e.target.closest('.time-btn');
+  if (timeBtn) {
+    currentTimeWindow = timeBtn.dataset.window;
+    renderTimeSelectors();
+    loadViewData(currentView);
+    return;
+  }
+
   const th = e.target.closest('th.sortable');
   if (th) {
     const [table, key] = th.dataset.sort.split(':');
@@ -902,11 +922,14 @@ function sortData(arr, state) {
 
 async function loadSummary() {
   try {
+    const timeQs = timeQueryString();
+    const timeParam = timeQs ? '?' + timeQs : '';
+    const timeSep = timeQs ? '&' + timeQs : '';
     const [stats, tasks, costSeries, sessionsResp] = await Promise.all([
-      fetchJson('/api/stats'),
+      fetchJson('/api/stats' + timeParam),
       fetchJson('/api/tasks'),
       fetchJson('/api/metrics/cost?range=' + (currentTimeWindow === 'all' ? '90d' : currentTimeWindow) + '&step=1d'),
-      fetchJson('/api/sessions?limit=500&offset=0'),
+      fetchJson('/api/sessions?limit=500&offset=0' + timeSep),
     ]);
     renderSummaryStats({
       totalCost: stats.total_cost_usd ?? 0,
@@ -1688,6 +1711,7 @@ function scheduleAutoRefresh() {
 
 // ── Init ──
 
+renderTimeSelectors();
 detectDataSource().then(() => {
   checkTeamAccess();
   return loadDashboard();
