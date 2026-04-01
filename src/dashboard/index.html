@@ -1097,30 +1097,20 @@ async function showTaskDetail(tagSet) {
   ).join(' ');
   statsEl.innerHTML = '<div class="stat-card" style="grid-column:1/-1"><div class="label">Loading...</div></div>';
 
-  if (tags.length === 1 && tags[0] === 'Untagged') {
-    const group = allTaskGroups.find(g => g.tags === 'Untagged') || {};
-    statsEl.innerHTML = [
-      { label: 'Task', value: '<span style="font-size:14px">' + pills + '</span>' },
-      { label: 'Total Turns', value: fmtNum(group.turn_count) },
-      { label: 'Human Interventions', value: fmtNum(group.human_interventions) },
-      { label: 'Duration', value: fmtDuration(group.total_duration_ms) },
-      { label: 'Cost', value: fmtCost(group.total_cost_usd) },
-    ].map(c =>
-      '<div class="stat-card"><div class="label">' + c.label + '</div><div class="value" style="font-size:16px">' + c.value + '</div></div>'
-    ).join('');
-    document.getElementById('task-turns-table').innerHTML = '';
-    document.getElementById('task-turns-pagination').innerHTML = '';
-    return;
-  }
-
-  const qs = 'tags=' + tags.map(encodeURIComponent).join(',') + '&mode=all';
+  const isUntagged = tags.length === 1 && tags[0] === 'Untagged';
+  const qs = isUntagged
+    ? 'untagged=true'
+    : 'tags=' + tags.map(encodeURIComponent).join(',') + '&mode=all';
 
   try {
-    const [stats, rawTurns] = await Promise.all([
-      fetchJson('/api/tasks/stats?' + qs),
-      fetchJson('/api/tasks/turns?' + qs + '&limit=' + PAGE_SIZE + '&offset=0'),
-    ]);
-    const turns = await enrichTurnsWithCost(rawTurns);
+    let stats;
+    if (isUntagged) {
+      const group = allTaskGroups.find(g => g.tags === 'Untagged') || {};
+      stats = { total_turns: group.turn_count, user_turns: group.human_interventions, total_duration_ms: group.total_duration_ms, total_cost_usd: group.total_cost_usd };
+    } else {
+      stats = await fetchJson('/api/tasks/stats?' + qs);
+    }
+    const turns = await fetchJson('/api/tasks/turns?' + qs + '&limit=' + PAGE_SIZE + '&offset=0');
 
     statsEl.innerHTML = [
       { label: 'Task', value: '<span style="font-size:14px">' + pills + '</span>' },
@@ -1171,17 +1161,22 @@ function renderTaskDetailTurns(turns) {
   }).join('');
 }
 
+function taskDetailQs() {
+  const isUntagged = taskDetailTags.length === 1 && taskDetailTags[0] === 'Untagged';
+  return isUntagged
+    ? 'untagged=true'
+    : 'tags=' + taskDetailTags.map(encodeURIComponent).join(',') + '&mode=all';
+}
+
 async function taskDetailNext() {
   taskDetailOffset += PAGE_SIZE;
-  const qs = 'tags=' + taskDetailTags.map(encodeURIComponent).join(',') + '&mode=all&limit=' + PAGE_SIZE + '&offset=' + taskDetailOffset;
-  const turns = await enrichTurnsWithCost(await fetchJson('/api/tasks/turns?' + qs));
+  const turns = await fetchJson('/api/tasks/turns?' + taskDetailQs() + '&limit=' + PAGE_SIZE + '&offset=' + taskDetailOffset);
   renderTaskDetailTurns(turns);
 }
 
 async function taskDetailPrev() {
   taskDetailOffset = Math.max(0, taskDetailOffset - PAGE_SIZE);
-  const qs = 'tags=' + taskDetailTags.map(encodeURIComponent).join(',') + '&mode=all&limit=' + PAGE_SIZE + '&offset=' + taskDetailOffset;
-  const turns = await enrichTurnsWithCost(await fetchJson('/api/tasks/turns?' + qs));
+  const turns = await fetchJson('/api/tasks/turns?' + taskDetailQs() + '&limit=' + PAGE_SIZE + '&offset=' + taskDetailOffset);
   renderTaskDetailTurns(turns);
 }
 
