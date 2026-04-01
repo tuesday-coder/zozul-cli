@@ -38,6 +38,7 @@ All data lands in SQLite at `~/.zozul/zozul.db`. A web dashboard and JSON API si
 | **Tasks** | What did I work on? Groups turns by tag combination, shows cost and time per task. |
 | **Tags** | How much per category? Per-tag stats with drill-down into individual prompts. |
 | **Sessions** | Raw session list. Sortable, filterable, click to see full conversation. |
+| **Team** | (Managers only) Team cost breakdown by member, team task groups. |
 
 All views support time filtering (7d / 30d / All). Auto-refreshes every 10s.
 
