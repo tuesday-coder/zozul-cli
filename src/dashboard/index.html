@@ -56,6 +56,8 @@
   }
   .source-badge.remote { border-color: var(--green); color: var(--green); }
   .source-badge.local { border-color: var(--blue); color: var(--blue); }
+  .source-badge.clickable { cursor: pointer; }
+  .source-badge.clickable:hover { opacity: 0.7; }
   .auto-btn {
     background: none;
     border: 1px solid var(--border);
@@ -434,7 +436,7 @@
   <h1>zozul</h1>
   <span class="subtitle">Agent Observability</span>
   <div class="header-right">
-    <span class="source-badge" id="source-badge" style="display:none">Local</span>
+    <span class="source-badge" id="source-badge" style="display:none" onclick="toggleDataSource()">Local</span>
     <button class="auto-btn" onclick="manualRefresh()" title="Auto-refresh every 10s">
       <span class="live-dot"></span>
       Auto
@@ -634,6 +636,7 @@
 // ── State ──
 
 let dataSource = 'local';
+let remoteAvailable = false;
 let autoRefreshTimer = null;
 let currentView = 'summary';
 let currentTimeWindow = '7d';
@@ -664,40 +667,43 @@ const AUTO_REFRESH_INTERVAL = 10_000;
 
 // ── Data source auto-detection ──
 
-async function detectDataSource() {
+function updateBadge() {
   const badge = document.getElementById('source-badge');
+  badge.textContent = dataSource === 'remote' ? 'Remote' : 'Local';
+  badge.className = 'source-badge ' + dataSource + (remoteAvailable ? ' clickable' : '');
+  badge.style.display = '';
+}
+
+async function detectDataSource() {
   if (typeof ZOZUL_CONFIG === 'undefined') {
     dataSource = 'local';
-    badge.textContent = 'Local';
-    badge.className = 'source-badge local';
-    badge.style.display = '';
+    remoteAvailable = false;
+    updateBadge();
     return;
   }
 
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
-    const healthUrl = ZOZUL_CONFIG.remote.baseUrl + '/health';
-    const res = await fetch(healthUrl, {
+    const res = await fetch(ZOZUL_CONFIG.remote.baseUrl + '/health', {
       signal: controller.signal,
       headers: { 'X-API-Key': ZOZUL_CONFIG.remote.apiKey },
     });
     clearTimeout(timeout);
-    if (res.ok) {
-      dataSource = 'remote';
-      badge.textContent = 'Remote';
-      badge.className = 'source-badge remote';
-    } else {
-      dataSource = 'local';
-      badge.textContent = 'Local';
-      badge.className = 'source-badge local';
-    }
+    remoteAvailable = res.ok;
+    dataSource = remoteAvailable ? 'remote' : 'local';
   } catch {
+    remoteAvailable = false;
     dataSource = 'local';
-    badge.textContent = 'Local';
-    badge.className = 'source-badge local';
   }
-  badge.style.display = '';
+  updateBadge();
+}
+
+function toggleDataSource() {
+  if (!remoteAvailable) return;
+  dataSource = dataSource === 'remote' ? 'local' : 'remote';
+  updateBadge();
+  loadDashboard();
 }
 
 async function fetchJson(path) {
