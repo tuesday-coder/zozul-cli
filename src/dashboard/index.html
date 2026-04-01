@@ -805,6 +805,16 @@ function copyText(text) {
   });
 }
 
+function timeQueryString() {
+  if (currentTimeWindow === 'all') return '';
+  const now = new Date();
+  const ms = currentTimeWindow.endsWith('d')
+    ? parseInt(currentTimeWindow) * 86400000
+    : parseInt(currentTimeWindow) * 3600000;
+  const from = new Date(now.getTime() - ms).toISOString();
+  return 'from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(now.toISOString());
+}
+
 // ── Navigation ──
 
 function showView(name) {
