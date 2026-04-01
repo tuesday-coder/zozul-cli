@@ -1152,8 +1152,17 @@ async function showTaskDetail(tagSet) {
   statsEl.innerHTML = '<div class="stat-card" style="grid-column:1/-1"><div class="label">Loading...</div></div>';
 
   if (tags.length === 1 && tags[0] === 'Untagged') {
-    statsEl.innerHTML = '<div class="stat-card" style="grid-column:1/-1"><div class="label">Task</div><div class="value" style="font-size:16px">' + pills + '</div></div>';
-    document.getElementById('task-turns-table').innerHTML = '<tr><td colspan="5" class="empty">Untagged turns cannot be drilled into.</td></tr>';
+    const group = allTaskGroups.find(g => g.tags === 'Untagged') || {};
+    statsEl.innerHTML = [
+      { label: 'Task', value: '<span style="font-size:14px">' + pills + '</span>' },
+      { label: 'Total Turns', value: fmtNum(group.turn_count) },
+      { label: 'Human Interventions', value: fmtNum(group.human_interventions) },
+      { label: 'Duration', value: fmtDuration(group.total_duration_ms) },
+      { label: 'Cost', value: fmtCost(group.total_cost_usd) },
+    ].map(c =>
+      '<div class="stat-card"><div class="label">' + c.label + '</div><div class="value" style="font-size:16px">' + c.value + '</div></div>'
+    ).join('');
+    document.getElementById('task-turns-table').innerHTML = '';
     document.getElementById('task-turns-pagination').innerHTML = '';
     return;
   }
