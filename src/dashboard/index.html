@@ -104,6 +104,13 @@
   }
   .nav-tab:hover { color: var(--text); }
   .nav-tab.active { color: var(--accent-light); border-bottom-color: var(--accent); }
+  .nav-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--border);
+    align-self: center;
+    margin: 0 8px;
+  }
 
   .container { max-width: 1280px; margin: 0 auto; padding: 24px; }
 
@@ -440,6 +447,7 @@
   <button class="nav-tab" data-view="tasks">Tasks</button>
   <button class="nav-tab" data-view="tags">Tags</button>
   <button class="nav-tab" data-view="sessions">Sessions</button>
+  <span class="nav-divider" id="team-divider" style="display:none"></span>
   <button class="nav-tab" data-view="team" id="team-tab" style="display:none">Team</button>
 </div>
 
@@ -1535,6 +1543,7 @@ async function checkTeamAccess() {
     if (data && data.team_id) {
       teamData = data;
       document.getElementById('team-tab').style.display = '';
+      document.getElementById('team-divider').style.display = '';
       // Populate selector (single team for now, extensible)
       const sel = document.getElementById('team-selector');
       sel.innerHTML = '<option value="' + data.team_id + '">' + escHtml(data.team_name) + '</option>';
