@@ -62,6 +62,26 @@ function buildSessionPayload(
   };
 }
 
+function applyTaskTagsFromResponse(
+  repo: SessionRepo,
+  sessionId: string,
+  taskTags: Array<{ turn_index: number; tag: string; run_id: string }>,
+): void {
+  const turns = repo.getSessionTurns(sessionId);
+  const turnLookupByIndex = new Map(turns.map(t => [t.turn_index, t.id]));
+  const byTagRun = new Map<string, { tag: string; run_id: string; turnIds: number[] }>();
+  for (const tt of taskTags) {
+    const turnId = turnLookupByIndex.get(tt.turn_index);
+    if (turnId == null) continue;
+    const key = `${tt.tag}::${tt.run_id}`;
+    if (!byTagRun.has(key)) byTagRun.set(key, { tag: tt.tag, run_id: tt.run_id, turnIds: [] });
+    byTagRun.get(key)!.turnIds.push(turnId);
+  }
+  for (const { tag, run_id, turnIds } of byTagRun.values()) {
+    repo.tagTurnsBatch(turnIds, tag, run_id);
+  }
+}
+
 /**
  * Sync a single session by ID — used for immediate post-Stop/SessionEnd sync.
  * Silently no-ops if the session doesn't exist.
@@ -79,7 +99,10 @@ export async function syncSingleSession(
   if (opts.dryRun) return;
 
   try {
-    await client.syncSession(sessionId, payload);
+    const resp = await client.syncSession(sessionId, payload);
+    if (resp.task_tags && resp.task_tags.length > 0) {
+      applyTaskTagsFromResponse(repo, sessionId, resp.task_tags);
+    }
     if (opts.verbose) console.log(`  auto-sync ${sessionId}: ok`);
   } catch (err) {
     if (opts.verbose) console.error(`  auto-sync ${sessionId}: failed — ${err instanceof Error ? err.message : err}`);
@@ -136,6 +159,10 @@ export async function runSync(
       try {
         const resp = await client.syncSession(session.id, payload);
         result.sessions.synced++;
+
+        if (resp.task_tags && resp.task_tags.length > 0) {
+          applyTaskTagsFromResponse(repo, session.id, resp.task_tags);
+        }
 
         // Track watermarks
         const rowid = (session as { _rowid?: number })._rowid;

@@ -7,6 +7,17 @@ import { getActiveContext, clearActiveContext } from "../context/index.js";
 import { ZozulApiClient } from "../sync/client.js";
 import { syncSingleSession, runSync } from "../sync/index.js";
 
+interface RetagStatus {
+  running: boolean;
+  progress: number;
+  message: string;
+  startedAt?: string;
+  finishedAt?: string;
+  error?: string;
+}
+
+let retagStatus: RetagStatus = { running: false, progress: 0, message: "" };
+
 export interface HookServerOptions {
   port: number;
   repo: SessionRepo;
@@ -74,6 +85,16 @@ export function createHookServer(opts: HookServerOptions): http.Server {
       }
 
       // ── API routes ──
+      if (method === "POST" && url.startsWith("/api/")) {
+        await handleApiPostRoute(url, req, repo, res, syncClient, verbose);
+        return;
+      }
+
+      if (method === "DELETE" && url.startsWith("/api/")) {
+        handleApiDeleteRoute(url, repo, res);
+        return;
+      }
+
       if (method === "GET" && url.startsWith("/api/")) {
         handleApiRoute(url, repo, res);
         return;
@@ -168,6 +189,97 @@ async function handleHookEvent(
   }
 }
 
+// ── API POST handler ──
+
+async function handleApiPostRoute(
+  url: string,
+  req: http.IncomingMessage,
+  repo: SessionRepo,
+  res: http.ServerResponse,
+  syncClient: ZozulApiClient | undefined,
+  verbose?: boolean,
+): Promise<void> {
+  const path = url.replace(/\?.*$/, "");
+
+  if (path === "/api/retag") {
+    if (!syncClient) {
+      sendJson(res, 503, { error: "No sync client configured" });
+      return;
+    }
+
+    const body = await readBody(req);
+    let bodyParsed: { project_path?: string; session_id?: string; custom_tags?: string[]; deleted_tags?: string[]; free_retag?: boolean } = {};
+    try {
+      bodyParsed = JSON.parse(body);
+    } catch {
+      // use empty body
+    }
+
+    sendJson(res, 202, { ok: true });
+
+    retagStatus = { running: true, progress: 0, message: "Starting...", startedAt: new Date().toISOString() };
+
+    syncClient.triggerRetag(bodyParsed).then(() => {
+      const poll = setInterval(() => {
+        syncClient.getRetagStatus().then(status => {
+          retagStatus = {
+            running: status.running,
+            progress: status.progress,
+            message: status.message,
+            startedAt: retagStatus.startedAt,
+            finishedAt: status.finished_at,
+            error: status.error,
+          };
+          if (!status.running) {
+            clearInterval(poll);
+            retagStatus.finishedAt = new Date().toISOString();
+            if (!status.error) {
+              runSync(repo, syncClient, { verbose }).catch(() => {});
+            }
+          }
+        }).catch(err => {
+          clearInterval(poll);
+          retagStatus.running = false;
+          retagStatus.error = err instanceof Error ? err.message : String(err);
+          retagStatus.finishedAt = new Date().toISOString();
+        });
+      }, 1000);
+    }).catch(err => {
+      retagStatus.running = false;
+      retagStatus.error = err instanceof Error ? err.message : String(err);
+      retagStatus.finishedAt = new Date().toISOString();
+    });
+
+    return;
+  }
+
+  sendJson(res, 404, { error: "Unknown API route" });
+}
+
+// ── API DELETE handler ──
+
+function handleApiDeleteRoute(url: string, repo: SessionRepo, res: http.ServerResponse): void {
+  const path = url.replace(/\?.*$/, "");
+
+  const tagRunMatch = path.match(/^\/api\/tag-runs\/([^/]+)$/);
+  if (tagRunMatch) {
+    const runId = decodeURIComponent(tagRunMatch[1]);
+    const deleted = repo.rollbackTagRun(runId);
+    sendJson(res, 200, { deleted });
+    return;
+  }
+
+  const tagByNameMatch = path.match(/^\/api\/tags\/by-name\/(.+)$/);
+  if (tagByNameMatch) {
+    const tagName = decodeURIComponent(tagByNameMatch[1]);
+    const deleted = repo.deleteTagByName(tagName);
+    sendJson(res, 200, { deleted });
+    return;
+  }
+
+  sendJson(res, 404, { error: "Unknown API route" });
+}
+
 // ── API handler ──
 
 function handleApiRoute(url: string, repo: SessionRepo, res: http.ServerResponse): void {
@@ -200,6 +312,14 @@ function handleApiRoute(url: string, repo: SessionRepo, res: http.ServerResponse
     const sessions = repo.listSessions(limit, offset, from, to);
     const total = repo.countSessions(from, to);
     sendJson(res, 200, { sessions, total, limit, offset });
+    return;
+  }
+
+  if (path === "/api/sessions/timeline" || path === "/api/timeline") {
+    const tlQs = new URL(url, "http://x").searchParams;
+    const from = tlQs.get("from") || new Date(Date.now() - 30 * 86400000).toISOString();
+    const to = tlQs.get("to") || new Date().toISOString();
+    sendJson(res, 200, repo.getTimeline(from, to));
     return;
   }
 
@@ -314,6 +434,16 @@ function handleApiRoute(url: string, repo: SessionRepo, res: http.ServerResponse
     const taskName = decodeURIComponent(taskStatsMatch[1]);
     const stats = repo.getStatsByTask(taskName);
     sendJson(res, 200, stats ?? {});
+    return;
+  }
+
+  if (path === "/api/retag/status") {
+    sendJson(res, 200, retagStatus);
+    return;
+  }
+
+  if (path === "/api/tag-runs") {
+    sendJson(res, 200, repo.listTagRuns());
     return;
   }
 

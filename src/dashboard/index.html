@@ -234,6 +234,57 @@
     background: rgba(139, 143, 163, 0.12);
     color: var(--text-dim);
   }
+  .tag-pill.pending {
+    background: transparent;
+    border: 1px dashed var(--accent);
+    color: var(--accent-light);
+  }
+  .tag-staged-delete { text-decoration: line-through; opacity: 0.5; }
+  .tag-action-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-size: 13px;
+    line-height: 1;
+  }
+  .tag-action-btn:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+  .retag-progress-wrap {
+    padding: 8px 16px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .retag-progress-bar {
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 6px;
+  }
+  .retag-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
+  .retag-status-text { font-size: 11px; color: var(--text-dim); font-family: var(--mono); }
+  .tag-runs-panel { border-bottom: 1px solid var(--border); }
+  .tag-runs-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 16px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .tag-runs-row:first-child { border-top: none; }
+  @keyframes retag-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .retag-pulsing td { animation: retag-pulse 1.4s ease-in-out infinite; }
+  #tag-table tr:nth-child(3n).retag-pulsing td { animation-delay: 0.2s; }
 
   .badge {
     display: inline-block;
@@ -437,6 +488,226 @@
 
   :not(button)[title] { cursor: help; }
 
+  /* Timeline / Gantt */
+  .tl-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 20px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .tl-header {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+  }
+  .tl-grid {
+    display: grid;
+    /* tag-label col + N date cols — set via JS */
+    overflow-x: auto;
+    min-width: 100%;
+  }
+  .tl-corner {
+    background: var(--surface2);
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    left: 0;
+    z-index: 2;
+  }
+  .tl-date-header {
+    padding: 5px 0;
+    text-align: center;
+    font-size: 10px;
+    font-family: var(--mono);
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .tl-date-header.today { color: var(--accent-light); }
+  .tl-tag-label {
+    padding: 8px 12px;
+    font-size: 12px;
+    font-family: var(--mono);
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    background: var(--surface);
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+  }
+  .tl-tag-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 7px;
+    flex-shrink: 0;
+  }
+  .tl-cell {
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 4px 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 32px;
+    cursor: default;
+    position: relative;
+  }
+  .tl-cell:hover { background: rgba(255,255,255,0.03); }
+  .tl-cell.has-sessions { cursor: pointer; }
+  .tl-cell.has-sessions:hover { background: rgba(124,110,240,0.06); }
+  .tl-block {
+    height: 20px;
+    border-radius: 3px;
+    min-width: 6px;
+    flex-shrink: 0;
+    opacity: 0.85;
+    transition: opacity 0.1s;
+    cursor: pointer;
+  }
+  .tl-block:hover { opacity: 1; filter: brightness(1.15); }
+  .tl-empty-cell {
+    background: var(--bg);
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    min-height: 32px;
+  }
+  .tl-sessions-popup {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 20;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+    min-width: 260px;
+    max-width: 320px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    font-size: 12px;
+  }
+  .tl-popup-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    cursor: pointer;
+    border-radius: 4px;
+    padding: 5px 6px;
+  }
+  .tl-popup-row:hover { background: rgba(124,110,240,0.1); }
+  .tl-popup-id { font-family: var(--mono); color: var(--text-dim); flex-shrink: 0; }
+  .tl-popup-dur { color: var(--text-dim); margin-left: auto; white-space: nowrap; }
+  .tl-popup-cost { color: var(--orange); white-space: nowrap; }
+
+  /* Timeline sub-tab toggle */
+  .tl-sub-tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 16px;
+  }
+  .tl-sub-tab {
+    padding: 4px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .tl-sub-tab:hover { color: var(--text); border-color: var(--text-dim); }
+  .tl-sub-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  /* Dot plot */
+  .dot-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 20px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .dot-row {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    border-bottom: 1px solid var(--border);
+  }
+  .dot-row:last-child { border-bottom: none; }
+  .dot-axis-row { min-height: 26px; background: var(--surface2); }
+  .dot-label {
+    width: 140px;
+    min-width: 140px;
+    padding: 0 12px;
+    font-size: 12px;
+    font-family: var(--mono);
+    display: flex;
+    align-items: center;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  .dot-track {
+    flex: 1;
+    position: relative;
+    height: 44px;
+    overflow: hidden;
+  }
+  .dot-axis-row .dot-track { height: 26px; }
+  .dot-tick {
+    position: absolute;
+    top: 7px;
+    font-size: 10px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    transform: translateX(-50%);
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .dot-gridline {
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 1px;
+    background: var(--border);
+    opacity: 0.6;
+    pointer-events: none;
+  }
+  .dot-point {
+    position: absolute;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    cursor: pointer;
+    opacity: 0.75;
+    transition: opacity 0.1s, transform 0.1s;
+  }
+  .dot-point:hover { opacity: 1; transform: translate(-50%, -50%) scale(1.5); z-index: 2; }
+
+  /* Stacked bar chart */
+  .bar-chart-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 20px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
   @media (max-width: 800px) {
     .stats-grid { grid-template-columns: 1fr 1fr; }
     .panel-filter { width: 150px; }
@@ -464,6 +735,7 @@
   <button class="nav-tab active" data-view="summary">Summary</button>
   <button class="nav-tab" data-view="tasks">Tasks</button>
   <button class="nav-tab" data-view="tags">Tags</button>
+  <button class="nav-tab" data-view="timeline">Timeline</button>
   <button class="nav-tab" data-view="sessions">Sessions</button>
   <span class="nav-divider" id="team-divider" style="display:none"></span>
   <button class="nav-tab" data-view="team" id="team-tab" style="display:none">Team</button>
@@ -564,18 +836,23 @@
 
   <!-- Tag View -->
   <div id="view-tags" class="view">
-    <div class="time-selector"></div>
     <div class="panel">
       <div class="panel-header">
         <span>Tags</span>
+        <div style="display:flex;align-items:center;gap:8px;flex:1;margin-left:16px">
+          <button class="time-btn" id="tag-runs-toggle-btn" onclick="toggleTagRuns()">Runs</button>
+        </div>
       </div>
+      <div id="retag-progress-wrap" style="display:none" class="retag-progress-wrap">
+        <div class="retag-progress-bar"><div class="retag-progress-fill" id="retag-progress-fill" style="width:0%"></div></div>
+        <div class="retag-status-text" id="retag-status-text">Tagging...</div>
+      </div>
+      <div id="tag-runs-panel" class="tag-runs-panel" style="display:none"></div>
       <table>
         <thead><tr>
           <th class="sortable" data-sort="tags:tag">Tag</th>
-          <th class="sortable" data-sort="tags:total_duration_ms">Total Time</th>
-          <th class="sortable desc" data-sort="tags:total_cost_usd">Total Cost</th>
-          <th class="sortable" data-sort="tags:human_interventions">Human Interventions</th>
-          <th class="sortable" data-sort="tags:last_seen">Last Active</th>
+          <th class="sortable desc" data-sort="tags:turn_count">Turns</th>
+          <th style="width:60px"></th>
         </tr></thead>
         <tbody id="tag-table"></tbody>
       </table>
@@ -600,6 +877,19 @@
         </tr></thead>
         <tbody id="tag-turns-table"></tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- Timeline View -->
+  <div id="view-timeline" class="view">
+    <div class="time-selector"></div>
+    <div class="tl-sub-tabs">
+      <button class="tl-sub-tab active" data-tlview="grid" onclick="setTlView('grid')">Grid</button>
+      <button class="tl-sub-tab" data-tlview="dots" onclick="setTlView('dots')">Dot plot</button>
+      <button class="tl-sub-tab" data-tlview="bars" onclick="setTlView('bars')">Stacked bars</button>
+    </div>
+    <div id="timeline-container">
+      <div class="empty" style="padding:60px">Loading timeline...</div>
     </div>
   </div>
 
@@ -660,9 +950,11 @@ let viewMode = 'cost'; // 'cost' or 'tokens'
 let previousView = 'tasks';
 let allTaskGroups = [];
 let allTagStats = [];
+let tagStaged = { custom: [], deleted: [] };
+let retagPollTimer = null;
 let sortState = {
   tasks: { key: 'total_cost_usd', dir: 'desc' },
-  tags: { key: 'total_cost_usd', dir: 'desc' },
+  tags: { key: 'turn_count', dir: 'desc' },
   sessions: { key: 'started_at', dir: 'desc' },
   'team-members': { key: 'total_cost_usd', dir: 'desc' },
   'team-tasks': { key: 'total_cost_usd', dir: 'desc' },
@@ -726,7 +1018,7 @@ function toggleDataSource() {
   loadDashboard();
 }
 
-async function fetchJson(path) {
+async function fetchJson(path, opts = {}) {
   if (dataSource === 'remote' && typeof ZOZUL_CONFIG !== 'undefined') {
     try {
       let remotePath = path.replace('/api/', '/');
@@ -739,14 +1031,14 @@ async function fetchJson(path) {
         if (!base.endsWith('/')) remotePath = base + '/' + remotePath.slice(qIdx);
       }
       const url = ZOZUL_CONFIG.remote.baseUrl + remotePath;
-      const res = await fetch(url, { headers: { 'X-API-Key': ZOZUL_CONFIG.remote.apiKey } });
-      if (res.ok) return res.json();
+      const res = await fetch(url, { ...opts, headers: { 'X-API-Key': ZOZUL_CONFIG.remote.apiKey, ...(opts.headers || {}) } });
+      if (res.ok) return res.status === 204 ? null : res.json();
     } catch {}
     // Remote failed — fall back to local for this request
   }
-  const res = await fetch(path);
+  const res = await fetch(path, opts);
   if (!res.ok) throw new Error(res.status + ' ' + path);
-  return res.json();
+  return res.status === 204 ? null : res.json();
 }
 
 // ── Client-side proportional cost ──
@@ -881,12 +1173,12 @@ function timeQueryString() {
 }
 
 function chartStepForWindow() {
-  return currentTimeWindow === '24h' ? '1h' : '1d';
+  return currentTimeWindow === '1d' ? '1h' : '1d';
 }
 
 function renderTimeSelectors() {
   document.querySelectorAll('.time-selector').forEach(el => {
-    el.innerHTML = ['24h', '7d', '30d', 'all'].map(w =>
+    el.innerHTML = ['1d', '7d', '30d', 'all'].map(w =>
       '<button class="time-btn' + (w === currentTimeWindow ? ' active' : '') + '" data-window="' + w + '">' +
       (w === 'all' ? 'All' : w) + '</button>'
     ).join('');
@@ -903,7 +1195,7 @@ function showView(name) {
 
   // Update tab highlight for main views
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-  const mainView = ['summary', 'sessions', 'tasks', 'tags', 'team'].includes(name) ? name : null;
+  const mainView = ['summary', 'sessions', 'tasks', 'tags', 'timeline', 'team'].includes(name) ? name : null;
   if (mainView) {
     const tab = document.querySelector('.nav-tab[data-view="' + mainView + '"]');
     if (tab) tab.classList.add('active');
@@ -983,7 +1275,7 @@ async function loadSummary() {
     const timeParam = timeQs ? '?' + timeQs : '';
     const timeSep = timeQs ? '&' + timeQs : '';
     const chartRange = currentTimeWindow === 'all' ? '90d' : currentTimeWindow;
-    const chartStep = currentTimeWindow === '24h' ? '1h' : '1d';
+    const chartStep = currentTimeWindow === '1d' ? '1h' : '1d';
     const [stats, tasks, costSeries, tokenSeries, sessionsResp] = await Promise.all([
       fetchJson('/api/stats' + timeParam),
       fetchJson('/api/tasks'),
@@ -1008,7 +1300,7 @@ async function loadSummary() {
 
 function renderUsageChart(costData, tokenData) {
   const isTokens = viewMode === 'tokens';
-  const isHourly = currentTimeWindow === '24h';
+  const isHourly = currentTimeWindow === '1d';
   const sourceData = isTokens ? tokenData : costData;
 
   const titleEl = document.getElementById('chart-title');
@@ -1277,7 +1569,67 @@ async function taskDetailPrev() {
 
 // ── Tag View ──
 
+// ── Tag staged state ──
+
+function loadTagStaged() {
+  try { tagStaged = JSON.parse(localStorage.getItem('zozul_tag_staged') || '{}'); } catch { /**/ }
+  tagStaged.custom = tagStaged.custom || [];
+  tagStaged.deleted = tagStaged.deleted || [];
+}
+
+function saveTagStaged() {
+  localStorage.setItem('zozul_tag_staged', JSON.stringify(tagStaged));
+}
+
+function clearTagStaged() {
+  tagStaged = { custom: [], deleted: [] };
+  localStorage.removeItem('zozul_tag_staged');
+}
+
+// ── Tag input ──
+
+function handleTagInput(e) {
+  if (e.key === 'Enter') { commitTagInput(); e.preventDefault(); }
+  if (e.key === ',') { setTimeout(commitTagInput, 0); }
+}
+
+function commitTagInput() {
+  const input = document.getElementById('tag-input');
+  const raw = input.value.trim().replace(/,+$/, '');
+  if (!raw) return;
+  const parts = raw.split(',').map(s => s.trim().toLowerCase().replace(/\s+/g, '-')).filter(Boolean);
+  for (const t of parts) {
+    if (!tagStaged.custom.includes(t) && !allTagStats.some(s => s.tag === t)) {
+      tagStaged.custom.push(t);
+    }
+  }
+  saveTagStaged();
+  input.value = '';
+  renderTagTable(sortData(allTagStats, sortState.tags));
+}
+
+async function stageDeleteTag(tag, e) {
+  e.stopPropagation();
+  if (!confirm(`Delete all occurrences of tag "${tag}"? This cannot be undone.`)) return;
+  try {
+    await fetchJson(`/api/tags/by-name/${encodeURIComponent(tag)}`, { method: 'DELETE' });
+    await loadTags();
+  } catch (err) {
+    alert('Delete failed: ' + err);
+  }
+}
+
+function removePendingTag(tag, e) {
+  e.stopPropagation();
+  tagStaged.custom = tagStaged.custom.filter(t => t !== tag);
+  saveTagStaged();
+  renderTagTable(sortData(allTagStats, sortState.tags));
+}
+
+// ── Load / render tags ──
+
 async function loadTags() {
+  loadTagStaged();
   try {
     const tasks = await fetchJson('/api/tasks');
     if (!tasks.length) { allTagStats = []; renderTagTable([]); return; }
@@ -1285,8 +1637,8 @@ async function loadTags() {
     const timeSep = timeQs ? '&' + timeQs : '';
     const statsList = await Promise.all(
       tasks.map(t => fetchJson('/api/tasks/stats?tags=' + encodeURIComponent(t.task) + '&mode=any' + timeSep)
-        .then(s => ({ ...s, tag: t.task, last_seen: t.last_tagged }))
-        .catch(() => ({ tag: t.task, turn_count: t.turn_count, human_interventions: 0, total_duration_ms: 0, total_cost_usd: 0, last_seen: t.last_tagged }))
+        .then(s => ({ ...s, tag: t.task, last_seen: t.last_seen }))
+        .catch(() => ({ tag: t.task, turn_count: t.turn_count, human_interventions: 0, total_duration_ms: 0, total_cost_usd: 0, last_seen: t.last_seen }))
       )
     );
     allTagStats = statsList.map(s => ({
@@ -1306,19 +1658,34 @@ async function loadTags() {
 
 function renderTagTable(stats) {
   const tbody = document.getElementById('tag-table');
-  if (!stats.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="empty">No tags yet. Tag turns with <code>zozul tag</code> to see them here.</td></tr>';
+  const pulsing = document.querySelectorAll('#tag-table tr.retag-pulsing').length > 0;
+
+  const pendingRows = tagStaged.custom.map(t =>
+    '<tr>' +
+      '<td><span class="tag-pill pending">' + escHtml(t) + '</span></td>' +
+      '<td style="color:var(--text-dim)">0</td>' +
+      '<td><button class="tag-action-btn" onclick="removePendingTag(\'' + escHtml(t).replace(/'/g, "\\'") + '\',event)" title="Remove">×</button></td>' +
+    '</tr>'
+  );
+
+  if (!stats.length && !tagStaged.custom.length) {
+    tbody.innerHTML = '<tr><td colspan="3" class="empty">No tags yet — they\'ll appear here after the first retag.</td></tr>';
     return;
   }
-  tbody.innerHTML = stats.map(t =>
-    '<tr class="clickable" onclick="showTagDetail(\'' + escHtml(t.tag).replace(/'/g, "\\'") + '\')">' +
+  const dataRows = stats.map(t => {
+    const actionBtn = '<button class="tag-action-btn" onclick="stageDeleteTag(\'' + escHtml(t.tag).replace(/'/g, "\\'") + '\',event)" title="Remove">×</button>';
+    const rowClass = 'clickable' + (pulsing ? ' retag-pulsing' : '');
+    return '<tr class="' + rowClass + '" onclick="showTagDetail(\'' + escHtml(t.tag).replace(/'/g, "\\'") + '\')">' +
       '<td><span class="tag-pill">' + escHtml(t.tag) + '</span></td>' +
       '<td>' + fmtDuration(t.total_duration_ms) + '</td>' +
       '<td><span class="badge badge-cost">' + fmtMetric(t.total_cost_usd, t.total_tokens) + '</span></td>' +
       '<td>' + fmtNum(t.human_interventions) + '</td>' +
       '<td title="' + fmtAbsolute(t.last_seen) + '">' + fmtRelative(t.last_seen) + '</td>' +
-    '</tr>'
-  ).join('');
+      '<td>' + actionBtn + '</td>' +
+    '</tr>';
+  });
+
+  tbody.innerHTML = pendingRows.join('') + dataRows.join('');
 }
 
 // ── Tag Detail ──
@@ -1763,8 +2130,373 @@ async function loadViewData(view) {
   else if (view === 'sessions') await loadSessions();
   else if (view === 'tasks') await loadTasks();
   else if (view === 'tags') await loadTags();
+  else if (view === 'timeline') await loadTimeline();
   else if (view === 'team') await loadTeam();
 }
+
+// ── Timeline / Gantt View ──
+
+function tagColor(tag) {
+  // Deterministic hue from tag string
+  let hash = 0;
+  for (let i = 0; i < tag.length; i++) hash = (hash * 31 + tag.charCodeAt(i)) >>> 0;
+  const hue = hash % 360;
+  return `hsl(${hue},60%,65%)`;
+}
+
+let tlActivePopup = null;
+
+function closeTlPopup() {
+  if (tlActivePopup) {
+    tlActivePopup.remove();
+    tlActivePopup = null;
+  }
+}
+
+let currentTlView = 'grid';
+
+function setTlView(v) {
+  currentTlView = v;
+  document.querySelectorAll('.tl-sub-tab').forEach(b => b.classList.toggle('active', b.dataset.tlview === v));
+  loadTimeline();
+}
+
+async function loadTimeline() {
+  const container = document.getElementById('timeline-container');
+  container.innerHTML = '<div class="empty" style="padding:60px">Loading...</div>';
+
+  try {
+    const timeQs = timeQueryString();
+    const timeParam = timeQs ? '?' + timeQs : '';
+    const data = await fetchJson('/api/sessions/timeline' + timeParam);
+
+    if (!data.length) {
+      container.innerHTML = '<div class="empty" style="padding:60px">No tagged sessions in this period. Tags will appear after the first retag.</div>';
+      return;
+    }
+
+    const now = new Date();
+    const ms = currentTimeWindow === 'all' ? 90 * 86400000
+              : currentTimeWindow.endsWith('d') ? parseInt(currentTimeWindow) * 86400000
+              : parseInt(currentTimeWindow) * 3600000;
+    const useHours = currentTimeWindow === '1d';
+
+    const windowStart = new Date(now.getTime() - ms);
+    if (!useHours) windowStart.setHours(0, 0, 0, 0);
+    else windowStart.setMinutes(0, 0, 0);
+    const windowEnd = new Date(now);
+    if (!useHours) windowEnd.setHours(23, 59, 59, 999);
+
+    const buckets = [];
+    const cur = new Date(windowStart);
+    while (cur <= windowEnd) {
+      buckets.push(new Date(cur));
+      if (useHours) cur.setHours(cur.getHours() + 1);
+      else cur.setDate(cur.getDate() + 1);
+    }
+
+    function localKey(d) {
+      const y = d.getFullYear();
+      const mo = String(d.getMonth() + 1).padStart(2, '0');
+      const dy = String(d.getDate()).padStart(2, '0');
+      if (!useHours) return `${y}-${mo}-${dy}`;
+      return `${y}-${mo}-${dy}T${String(d.getHours()).padStart(2, '0')}`;
+    }
+    function parseTs(s) {
+      return new Date(s.replace(' ', 'T') + (s.includes('Z') || s.includes('+') ? '' : 'Z'));
+    }
+    function bucketKey(dateStr) { return localKey(parseTs(dateStr)); }
+    function bucketKeyFromDate(d) { return localKey(d); }
+    function bucketLabel(d) {
+      if (useHours) return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    }
+
+    const tagOrder = [];
+    for (const entry of data) {
+      if (!tagOrder.includes(entry.tag)) tagOrder.push(entry.tag);
+    }
+
+    const ctx = { data, tagOrder, buckets, useHours, windowStart, windowEnd, now,
+                  parseTs, bucketKey, bucketKeyFromDate, bucketLabel };
+
+    if (currentTlView === 'grid') renderTlGrid(container, ctx);
+    else if (currentTlView === 'dots') renderTlDots(container, ctx);
+    else renderTlBars(container, ctx);
+
+  } catch (e) {
+    console.error('timeline load failed', e);
+    container.innerHTML = '<div class="empty" style="padding:60px;color:var(--red)">Failed to load timeline: ' + escHtml(String(e)) + '</div>';
+  }
+}
+
+function renderTlGrid(container, ctx) {
+  const { data, tagOrder, buckets, useHours, now, bucketKey, bucketKeyFromDate, bucketLabel } = ctx;
+
+  // Build index: tag → bucket-key → session objects[]
+  const index = {};
+  for (const tag of tagOrder) index[tag] = {};
+  for (const entry of data) {
+    const bk = bucketKey(entry.turn_timestamp);
+    const tag = entry.tag;
+    if (!index[tag][bk]) index[tag][bk] = [];
+    if (!index[tag][bk].find(x => x.session_id === entry.session_id)) {
+      index[tag][bk].push({
+        session_id: entry.session_id,
+        started_at: entry.turn_timestamp,
+        total_duration_ms: entry.total_duration_ms,
+        total_cost_usd: entry.total_cost_usd,
+      });
+    }
+  }
+
+  const nowBucketKey = bucketKeyFromDate(now);
+  const cellW = useHours ? 52 : buckets.length <= 7 ? 80 : buckets.length <= 30 ? 36 : 20;
+  const labelW = 130;
+  const cols = `${labelW}px repeat(${buckets.length}, minmax(${cellW}px, 1fr))`;
+  const periodLabel = useHours ? `${buckets.length} hours` : `${buckets.length} days`;
+
+  let html = `<div class="tl-wrap">
+    <div class="tl-header">Tag grid — ${periodLabel}</div>
+    <div class="tl-grid" style="grid-template-columns:${cols}">`;
+
+  html += `<div class="tl-corner"></div>`;
+  for (const bucket of buckets) {
+    const bk = bucketKeyFromDate(bucket);
+    const isNow = bk === nowBucketKey;
+    html += `<div class="tl-date-header${isNow ? ' today' : ''}" title="${bk}">${bucketLabel(bucket)}</div>`;
+  }
+
+  for (const tag of tagOrder) {
+    const color = tagColor(tag);
+    html += `<div class="tl-tag-label"><span class="tl-tag-dot" style="background:${color}"></span>${escHtml(tag)}</div>`;
+    for (const bucket of buckets) {
+      const bk = bucketKeyFromDate(bucket);
+      const cellSessions = index[tag][bk] || [];
+      if (!cellSessions.length) {
+        html += `<div class="tl-empty-cell"></div>`;
+      } else {
+        const totalMs = cellSessions.reduce((s, x) => s + (x.total_duration_ms || 0), 0);
+        const totalCost = cellSessions.reduce((s, x) => s + (x.total_cost_usd || 0), 0);
+        const maxBar = cellW - 8;
+        const barW = Math.max(6, Math.min(maxBar, 6 + (cellSessions.length - 1) * Math.floor(maxBar / 8)));
+        const sessionsJson = JSON.stringify(cellSessions).replace(/"/g, '&quot;');
+        html += `<div class="tl-cell has-sessions" ` +
+          `title="${escHtml(tag)} · ${fmtDuration(totalMs)} · ${fmtCost(totalCost)}" ` +
+          `onclick="tlCellClick(event,'${escHtml(tag)}','${bk}',${sessionsJson.replace(/'/g,"&#39;")})" ` +
+          `data-tag="${escHtml(tag)}" data-day="${bk}">` +
+          `<div class="tl-block" style="width:${barW}px;background:${color}" ` +
+          `title="${cellSessions.length} session${cellSessions.length > 1 ? 's' : ''} · ${fmtDuration(totalMs)} · ${fmtCost(totalCost)}"></div>` +
+          `</div>`;
+      }
+    }
+  }
+
+  html += `</div></div>`;
+  container.innerHTML = html;
+}
+
+function renderTlDots(container, ctx) {
+  const { data, tagOrder, buckets, useHours, windowStart, windowEnd, parseTs } = ctx;
+  const totalMs = windowEnd - windowStart;
+
+  // Parse all timestamps, filter to window
+  const entries = data
+    .map(e => ({ ...e, ts: parseTs(e.turn_timestamp) }))
+    .filter(e => e.ts >= windowStart && e.ts <= windowEnd);
+
+  // Axis ticks — cap at ~16 ticks to avoid crowding
+  const tickEvery = Math.max(1, Math.ceil(buckets.length / 16));
+  const tickBuckets = buckets.filter((_, i) => i % tickEvery === 0);
+
+  let html = `<div class="dot-wrap">`;
+
+  // Axis row
+  html += `<div class="dot-row dot-axis-row">
+    <div class="dot-label" style="font-size:10px;color:var(--text-dim)">${useHours ? 'hour' : 'date'}</div>
+    <div class="dot-track">`;
+  for (const b of tickBuckets) {
+    const pct = (b - windowStart) / totalMs * 100;
+    const label = useHours
+      ? b.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+      : b.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    html += `<span class="dot-tick" style="left:${pct.toFixed(2)}%">${escHtml(label)}</span>`;
+  }
+  html += `</div></div>`;
+
+  // One row per tag
+  for (const tag of tagOrder) {
+    const color = tagColor(tag);
+    const tagEntries = entries.filter(e => e.tag === tag);
+
+    html += `<div class="dot-row">
+      <div class="dot-label"><span class="tl-tag-dot" style="background:${color}"></span>${escHtml(tag)}</div>
+      <div class="dot-track">`;
+
+    // Gridlines at tick boundaries
+    for (const b of tickBuckets) {
+      const pct = (b - windowStart) / totalMs * 100;
+      html += `<div class="dot-gridline" style="left:${pct.toFixed(2)}%"></div>`;
+    }
+
+    // One dot per turn entry
+    for (const e of tagEntries) {
+      const pct = (e.ts - windowStart) / totalMs * 100;
+      const tip = `${escHtml(tag)} · ${e.ts.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ${fmtCost(e.total_cost_usd)}`;
+      html += `<div class="dot-point" style="left:${pct.toFixed(2)}%;background:${color}" ` +
+        `title="${tip}" onclick="showSession('${e.session_id}','timeline')"></div>`;
+    }
+
+    html += `</div></div>`;
+  }
+
+  html += `</div>`;
+  container.innerHTML = html;
+}
+
+function renderTlBars(container, ctx) {
+  const { data, tagOrder, buckets, useHours, bucketKey, bucketKeyFromDate } = ctx;
+
+  // Count unique sessions per (bucket, tag) — deduplicated so same session isn't double-counted
+  const barData = {};
+  for (const b of buckets) {
+    const bk = bucketKeyFromDate(b);
+    barData[bk] = {};
+    for (const tag of tagOrder) barData[bk][tag] = new Set();
+  }
+  for (const entry of data) {
+    const bk = bucketKey(entry.turn_timestamp);
+    if (barData[bk]?.[entry.tag] !== undefined) {
+      barData[bk][entry.tag].add(entry.session_id);
+    }
+  }
+
+  // Flatten sets → counts, find max stack height
+  let maxVal = 0;
+  for (const bk of Object.keys(barData)) {
+    let total = 0;
+    for (const tag of tagOrder) {
+      const count = barData[bk][tag].size;
+      barData[bk][tag] = count;
+      total += count;
+    }
+    maxVal = Math.max(maxVal, total);
+  }
+
+  if (maxVal === 0) {
+    container.innerHTML = '<div class="empty" style="padding:60px">No data in this period.</div>';
+    return;
+  }
+
+  // SVG dimensions — fill container width
+  const containerW = Math.max(400, (document.getElementById('timeline-container').offsetWidth || 800) - 32);
+  const svgW = containerW;
+  const svgH = 200;
+  const padL = 30, padR = 10, padT = 8, padB = 32;
+  const chartW = svgW - padL - padR;
+  const chartH = svgH - padT - padB;
+  const barSlotW = Math.max(4, chartW / buckets.length);
+  const barW = Math.max(2, barSlotW - 2);
+
+  const yStep = Math.max(1, Math.ceil(maxVal / 5));
+  const tickEvery = Math.max(1, Math.ceil(buckets.length / 18));
+
+  let svg = `<svg width="100%" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}" style="display:block">
+    <g transform="translate(${padL},${padT})">`;
+
+  // Y gridlines + labels
+  for (let v = 0; v <= maxVal; v += yStep) {
+    const y = (chartH - (v / maxVal) * chartH).toFixed(1);
+    svg += `<line x1="0" y1="${y}" x2="${chartW}" y2="${y}" stroke="var(--border)" stroke-width="1"/>`;
+    svg += `<text x="-4" y="${(+y + 4).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-dim)">${v}</text>`;
+  }
+
+  // X baseline
+  svg += `<line x1="0" y1="${chartH}" x2="${chartW}" y2="${chartH}" stroke="var(--border)" stroke-width="1"/>`;
+
+  // Stacked bars
+  buckets.forEach((b, i) => {
+    const bk = bucketKeyFromDate(b);
+    const x = (i * barSlotW + (barSlotW - barW) / 2).toFixed(1);
+    let yOff = chartH;
+
+    for (const tag of [...tagOrder].reverse()) {
+      const val = barData[bk]?.[tag] || 0;
+      if (!val) continue;
+      const h = (val / maxVal) * chartH;
+      yOff -= h;
+      const color = tagColor(tag);
+      const label = useHours
+        ? b.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+        : b.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      svg += `<rect x="${x}" y="${yOff.toFixed(1)}" width="${barW}" height="${h.toFixed(1)}" fill="${color}" opacity="0.85" rx="1">` +
+        `<title>${escHtml(tag)} · ${escHtml(label)} · ${val} session${val !== 1 ? 's' : ''}</title></rect>`;
+    }
+
+    if (i % tickEvery === 0) {
+      const label = useHours
+        ? b.toLocaleTimeString(undefined, { hour: '2-digit' })
+        : b.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      svg += `<text x="${(+x + barW / 2).toFixed(1)}" y="${(chartH + 14).toFixed(1)}" text-anchor="middle" font-size="9" fill="var(--text-dim)">${escHtml(label)}</text>`;
+    }
+  });
+
+  svg += `</g>`;
+
+  // Legend below chart
+  let lx = padL;
+  svg += `<g transform="translate(0,${svgH - 4})">`;
+  for (const tag of tagOrder) {
+    const color = tagColor(tag);
+    svg += `<rect x="${lx}" y="-9" width="9" height="9" fill="${color}" rx="1"/>`;
+    svg += `<text x="${lx + 12}" y="0" font-size="9" fill="var(--text-dim)">${escHtml(tag)}</text>`;
+    lx += 14 + Math.min(tag.length, 24) * 6 + 10;
+  }
+  svg += `</g></svg>`;
+
+  container.innerHTML = `<div class="bar-chart-wrap">
+    <div class="tl-header">Sessions per tag — ${useHours ? 'by hour' : 'by day'} (Y = unique sessions)</div>
+    <div style="overflow-x:auto;padding:16px 16px 10px">${svg}</div>
+  </div>`;
+}
+
+function tlCellClick(event, tag, day, sessions) {
+  event.stopPropagation();
+  closeTlPopup();
+
+  const cell = event.currentTarget;
+  const popup = document.createElement('div');
+  popup.className = 'tl-sessions-popup';
+
+  const header = document.createElement('div');
+  header.style.cssText = 'font-size:11px;color:var(--text-dim);margin-bottom:6px;font-family:var(--mono)';
+  // day is a local-time key ("2026-04-03T21" or "2026-04-03") — parse as local, not UTC
+  const dayDate = new Date(day.length === 13 ? day + ':00:00' : day);
+  const dayLabel = day.length === 13
+    ? dayDate.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : dayDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  header.textContent = tag + ' · ' + dayLabel;
+  popup.appendChild(header);
+
+  for (const s of sessions) {
+    const row = document.createElement('div');
+    row.className = 'tl-popup-row';
+    row.innerHTML =
+      `<span class="tl-popup-id">${shortId(s.session_id)}</span>` +
+      `<span style="color:var(--text);flex:1;font-size:11px">${fmtRelative(s.started_at)}</span>` +
+      `<span class="tl-popup-dur">${fmtDuration(s.total_duration_ms)}</span>` +
+      `<span class="tl-popup-cost">${fmtCost(s.total_cost_usd)}</span>`;
+    row.onclick = (e) => { e.stopPropagation(); closeTlPopup(); showSession(s.session_id, 'timeline'); };
+    popup.appendChild(row);
+  }
+
+  cell.style.position = 'relative';
+  cell.appendChild(popup);
+  tlActivePopup = popup;
+}
+
+// Close popup on outside click
+document.addEventListener('click', () => closeTlPopup());
 
 async function loadDashboard() {
   const btn = document.querySelector('.auto-btn');
@@ -1788,7 +2520,7 @@ function manualRefresh() {
 function scheduleAutoRefresh() {
   autoRefreshTimer = setTimeout(async () => {
     // Only auto-refresh main views, not detail views
-    if (['summary', 'sessions', 'tasks', 'tags', 'team'].includes(currentView)) {
+    if (['summary', 'sessions', 'tasks', 'tags', 'timeline', 'team'].includes(currentView)) {
       await loadDashboard();
     }
     scheduleAutoRefresh();

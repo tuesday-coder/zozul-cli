@@ -12,6 +12,7 @@ const LOG_PATH = path.join(os.homedir(), ".zozul", "zozul.log");
 export interface ServiceInstallOptions {
   port: number;
   dbPath?: string;
+  dev?: boolean;
 }
 
 export interface ServiceResult {
@@ -35,14 +36,20 @@ export function installService(opts: ServiceInstallOptions): ServiceResult {
     ZOZUL_PORT: String(opts.port),
   };
   if (opts.dbPath) env.ZOZUL_DB_PATH = opts.dbPath;
-  if (process.env.ZOZUL_API_URL) env.ZOZUL_API_URL = process.env.ZOZUL_API_URL;
-  if (process.env.ZOZUL_API_KEY) env.ZOZUL_API_KEY = process.env.ZOZUL_API_KEY;
+  if (opts.dev) {
+    // Dev mode: point at local backend, override any prod keys in the environment
+    env.ZOZUL_API_URL = process.env.ZOZUL_DEV_API_URL ?? "http://localhost:8000";
+    env.ZOZUL_API_KEY = process.env.ZOZUL_DEV_API_KEY ?? "zozul_local_dev_key";
+  } else {
+    if (process.env.ZOZUL_API_URL) env.ZOZUL_API_URL = process.env.ZOZUL_API_URL;
+    if (process.env.ZOZUL_API_KEY) env.ZOZUL_API_KEY = process.env.ZOZUL_API_KEY;
+  }
   if (process.env.ZOZUL_VERBOSE) env.ZOZUL_VERBOSE = process.env.ZOZUL_VERBOSE;
 
   if (platform === "macos") {
-    return installLaunchd(env);
+    return installLaunchd(env, opts.dev);
   } else {
-    return installSystemd(env);
+    return installSystemd(env, opts.dev);
   }
 }
 
@@ -148,7 +155,7 @@ export function serviceStatus(): string {
 
 // ── macOS launchd ──
 
-function installLaunchd(env: Record<string, string>): ServiceResult {
+function installLaunchd(env: Record<string, string>, dev = false): ServiceResult {
   const nodeBin = process.execPath;
   const scriptPath = path.resolve(process.argv[1]);
 
@@ -158,6 +165,8 @@ function installLaunchd(env: Record<string, string>): ServiceResult {
   const envEntries = Object.entries(env)
     .map(([k, v]) => `\t\t<key>${k}</key>\n\t\t<string>${v}</string>`)
     .join("\n");
+
+  const devArg = dev ? "\n\t\t<string>--dev</string>" : "";
 
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -169,7 +178,7 @@ function installLaunchd(env: Record<string, string>): ServiceResult {
 \t<array>
 \t\t<string>${nodeBin}</string>
 \t\t<string>${scriptPath}</string>
-\t\t<string>serve</string>
+\t\t<string>serve</string>${devArg}
 \t</array>
 \t<key>EnvironmentVariables</key>
 \t<dict>
@@ -194,20 +203,38 @@ ${envEntries}
 
   fs.writeFileSync(PLIST_PATH, plist, "utf-8");
 
-  // Unload any previous version first, then bootstrap
+  // Unload any previous version first (try both modern and legacy APIs)
   let alreadyRunning = false;
   const uid = os.userInfo().uid;
   try {
     execSync(`launchctl bootout gui/${uid}/${LABEL}`, { stdio: "ignore" });
   } catch {
-    // Wasn't loaded — fine
+    // Wasn't loaded via modern API — try legacy unload
+    try {
+      execSync(`launchctl unload -w "${PLIST_PATH}"`, { stdio: "ignore" });
+    } catch {
+      // Not loaded at all — fine
+    }
   }
+
+  // Bootstrap (modern API), fall back to legacy load if it fails with I/O error
   try {
     execSync(`launchctl bootstrap gui/${uid} "${PLIST_PATH}"`, { stdio: "pipe" });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("already")) {
       alreadyRunning = true;
+    } else if (msg.includes("I/O error") || msg.includes("Input/output")) {
+      // Stale launchd state — fall back to legacy load
+      try {
+        execSync(`launchctl load -w "${PLIST_PATH}"`, { stdio: "pipe" });
+      } catch (legacyErr: unknown) {
+        const legacyMsg = legacyErr instanceof Error ? legacyErr.message : String(legacyErr);
+        if (!legacyMsg.includes("already")) {
+          throw new Error(`launchctl bootstrap failed: ${msg}`);
+        }
+        alreadyRunning = true;
+      }
     } else {
       throw new Error(`launchctl bootstrap failed: ${msg}`);
     }
@@ -218,7 +245,7 @@ ${envEntries}
 
 // ── Linux systemd ──
 
-function installSystemd(env: Record<string, string>): ServiceResult {
+function installSystemd(env: Record<string, string>, dev = false): ServiceResult {
   const nodeBin = process.execPath;
   const scriptPath = path.resolve(process.argv[1]);
 
@@ -234,7 +261,7 @@ Description=zozul — Agent Observability
 After=network.target
 
 [Service]
-ExecStart=${nodeBin} ${scriptPath} serve
+ExecStart=${nodeBin} ${scriptPath} serve${dev ? " --dev" : ""}
 ${envLines}
 WorkingDirectory=${path.dirname(LOG_PATH)}
 Restart=on-failure

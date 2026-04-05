@@ -181,24 +181,45 @@ export class SessionRepo {
   }
 
   listSessions(limit = 50, offset = 0, from?: string, to?: string): (SessionRow & { user_turns: number })[] {
+    // TODO(temporary): filters for empty sessions and old classifier sessions — remove once cleaned up
+    const base = `
+      FROM sessions s
+      WHERE s.parent_session_id IS NULL
+        AND s.total_turns > 0
+        AND NOT EXISTS (
+          SELECT 1 FROM turns
+          WHERE turns.session_id = s.id
+            AND turns.is_real_user = 1
+            AND (turns.content_text LIKE 'You are classifying a block of Claude Code work that occurred between two git commits.%'
+              OR turns.content_text LIKE 'You are documenting a block of AI-assisted engineering work%')
+        )
+    `;
+    const userTurns = `(SELECT COUNT(*) FROM turns t WHERE t.session_id = s.id AND t.is_real_user = 1) as user_turns`;
     if (from && to) {
-      return this.db.prepare(`
-        SELECT s.*, (SELECT COUNT(*) FROM turns t WHERE t.session_id = s.id AND t.is_real_user = 1) as user_turns
-        FROM sessions s WHERE s.parent_session_id IS NULL AND s.started_at >= ? AND s.started_at <= ? ORDER BY s.started_at DESC LIMIT ? OFFSET ?
-      `).all(from, to, limit, offset) as (SessionRow & { user_turns: number })[];
+      return this.db.prepare(`SELECT s.*, ${userTurns} ${base} AND s.started_at >= ? AND s.started_at <= ? ORDER BY s.started_at DESC LIMIT ? OFFSET ?`).all(from, to, limit, offset) as (SessionRow & { user_turns: number })[];
     }
-    return this.db.prepare(`
-      SELECT s.*, (SELECT COUNT(*) FROM turns t WHERE t.session_id = s.id AND t.is_real_user = 1) as user_turns
-      FROM sessions s WHERE s.parent_session_id IS NULL ORDER BY s.started_at DESC LIMIT ? OFFSET ?
-    `).all(limit, offset) as (SessionRow & { user_turns: number })[];
+    return this.db.prepare(`SELECT s.*, ${userTurns} ${base} ORDER BY s.started_at DESC LIMIT ? OFFSET ?`).all(limit, offset) as (SessionRow & { user_turns: number })[];
   }
 
   countSessions(from?: string, to?: string): number {
+    // TODO(temporary): filters for empty sessions and old classifier sessions — remove once cleaned up
+    const base = `
+      FROM sessions
+      WHERE parent_session_id IS NULL
+        AND total_turns > 0
+        AND NOT EXISTS (
+          SELECT 1 FROM turns
+          WHERE turns.session_id = sessions.id
+            AND turns.is_real_user = 1
+            AND (turns.content_text LIKE 'You are classifying a block of Claude Code work that occurred between two git commits.%'
+              OR turns.content_text LIKE 'You are documenting a block of AI-assisted engineering work%')
+        )
+    `;
     if (from && to) {
-      const row = this.db.prepare(`SELECT COUNT(*) as n FROM sessions WHERE parent_session_id IS NULL AND started_at >= ? AND started_at <= ?`).get(from, to) as { n: number };
+      const row = this.db.prepare(`SELECT COUNT(*) as n ${base} AND started_at >= ? AND started_at <= ?`).get(from, to) as { n: number };
       return row.n;
     }
-    const row = this.db.prepare(`SELECT COUNT(*) as n FROM sessions WHERE parent_session_id IS NULL`).get() as { n: number };
+    const row = this.db.prepare(`SELECT COUNT(*) as n ${base}`).get() as { n: number };
     return row.n;
   }
 
@@ -412,15 +433,99 @@ export class SessionRepo {
     `).run(turnId, task, new Date().toISOString());
   }
 
-  tagTurnsBatch(turnIds: number[], task: string): void {
+  tagTurnsBatch(turnIds: number[], task: string, runId: string): void {
     const stmt = this.db.prepare(`
-      INSERT OR IGNORE INTO task_tags (turn_id, task, tagged_at)
-      VALUES (?, ?, ?)
+      INSERT OR IGNORE INTO task_tags (turn_id, task, tagged_at, run_id)
+      VALUES (?, ?, ?, ?)
     `);
     const taggedAt = new Date().toISOString();
     this.db.transaction(() => {
-      for (const turnId of turnIds) stmt.run(turnId, task, taggedAt);
+      for (const turnId of turnIds) stmt.run(turnId, task, taggedAt, runId);
     })();
+  }
+
+  getBlockTurns(userTurnId: number): TurnRow[] {
+    const turn = this.db.prepare(`SELECT * FROM turns WHERE id = ?`).get(userTurnId) as TurnRow | undefined;
+    if (!turn) return [];
+
+    const nextRealUser = this.db.prepare(`
+      SELECT turn_index FROM turns
+      WHERE session_id = ? AND turn_index > ? AND is_real_user = 1
+      ORDER BY turn_index ASC LIMIT 1
+    `).get(turn.session_id, turn.turn_index) as { turn_index: number } | undefined;
+
+    const maxIndex = nextRealUser ? nextRealUser.turn_index : 999999;
+
+    return this.db.prepare(`
+      SELECT * FROM turns
+      WHERE session_id = ? AND turn_index >= ? AND turn_index < ?
+      ORDER BY turn_index ASC
+    `).all(turn.session_id, turn.turn_index, maxIndex) as TurnRow[];
+  }
+
+  rollbackTagRun(runId: string): number {
+    const result = this.db.prepare(`DELETE FROM task_tags WHERE run_id = ?`).run(runId);
+    return result.changes;
+  }
+
+  listTagRuns(): Array<{ run_id: string; tags: string[]; turn_count: number; created_at: string }> {
+    const rows = this.db.prepare(`
+      SELECT run_id, GROUP_CONCAT(DISTINCT task) as tags, COUNT(*) as turn_count, MIN(tagged_at) as created_at
+      FROM task_tags
+      WHERE run_id IS NOT NULL
+      GROUP BY run_id
+      ORDER BY MIN(tagged_at) DESC
+    `).all() as Array<{ run_id: string; tags: string; turn_count: number; created_at: string }>;
+    return rows.map(r => ({ ...r, tags: r.tags ? r.tags.split(",") : [] }));
+  }
+
+  deleteTag(tag: string): void {
+    this.db.prepare(`DELETE FROM task_tags WHERE task = ?`).run(tag);
+  }
+
+  deleteTagsForScope(projectPath?: string, sessionId?: string): void {
+    if (sessionId) {
+      this.db.prepare(`
+        DELETE FROM task_tags WHERE turn_id IN (
+          SELECT id FROM turns WHERE session_id = ?
+        )
+      `).run(sessionId);
+    } else if (projectPath) {
+      this.db.prepare(`
+        DELETE FROM task_tags WHERE turn_id IN (
+          SELECT t.id FROM turns t
+          JOIN sessions s ON s.id = t.session_id
+          WHERE s.project_path = ?
+        )
+      `).run(projectPath);
+    }
+  }
+
+  getTimeline(from: string, to: string): Array<{
+    session_id: string;
+    tag: string;
+    turn_timestamp: string;
+    total_duration_ms: number;
+    total_cost_usd: number;
+  }> {
+    return this.db.prepare(`
+      SELECT s.id as session_id,
+             tt.task as tag,
+             t.timestamp as turn_timestamp,
+             COALESCE(s.total_duration_ms, 0) as total_duration_ms,
+             COALESCE(s.total_cost_usd, 0) as total_cost_usd
+      FROM sessions s
+      JOIN turns t ON t.session_id = s.id AND t.is_real_user = 1
+      JOIN task_tags tt ON tt.turn_id = t.id
+      WHERE s.total_turns > 0
+        AND t.timestamp >= ? AND t.timestamp <= ?
+      ORDER BY t.timestamp
+    `).all(from, to) as Array<{ session_id: string; tag: string; turn_timestamp: string; total_duration_ms: number; total_cost_usd: number }>;
+  }
+
+  deleteTagByName(tagName: string): number {
+    const result = this.db.prepare(`DELETE FROM task_tags WHERE task = ?`).run(tagName);
+    return result.changes;
   }
 
   getTasksForTurn(turnId: number): string[] {
@@ -602,14 +707,15 @@ export class SessionRepo {
     `).get(...tasks, tasks.length, ...timeParams);
   }
 
-  listTasks(): { task: string; turn_count: number; first_tagged: string; last_tagged: string }[] {
+  listTasks(): { task: string; turn_count: number; first_seen: string; last_seen: string }[] {
     return this.db.prepare(`
-      SELECT task, COUNT(*) as turn_count,
-        MIN(tagged_at) as first_tagged, MAX(tagged_at) as last_tagged
-      FROM task_tags
-      GROUP BY task
-      ORDER BY last_tagged DESC
-    `).all() as { task: string; turn_count: number; first_tagged: string; last_tagged: string }[];
+      SELECT tt.task, COUNT(*) as turn_count,
+        MIN(t.timestamp) as first_seen, MAX(t.timestamp) as last_seen
+      FROM task_tags tt
+      JOIN turns t ON t.id = tt.turn_id
+      GROUP BY tt.task
+      ORDER BY last_seen DESC
+    `).all() as { task: string; turn_count: number; first_seen: string; last_seen: string }[];
   }
 
   /**
@@ -638,7 +744,7 @@ export class SessionRepo {
       FROM turns t
       LEFT JOIN turn_tag_sets tts ON tts.turn_id = t.id
       JOIN sessions s ON s.id = t.session_id
-      WHERE s.parent_session_id IS NULL${timeFilter}
+      WHERE 1=1${timeFilter}
       GROUP BY COALESCE(tts.tag_set, 'Untagged')
       ORDER BY last_seen DESC
     `).all(...params) as { tags: string; turn_count: number; human_interventions: number; total_duration_ms: number; total_cost_usd: number; total_tokens: number; last_seen: string }[];

@@ -104,11 +104,13 @@ function migrate(db: Database.Database): void {
       turn_id   INTEGER NOT NULL REFERENCES turns(id),
       task      TEXT NOT NULL,
       tagged_at TEXT NOT NULL,
+      run_id    TEXT,
       UNIQUE(turn_id, task)
     );
 
     CREATE INDEX IF NOT EXISTS idx_task_tags_task ON task_tags(task);
     CREATE INDEX IF NOT EXISTS idx_task_tags_turn ON task_tags(turn_id);
+    CREATE INDEX IF NOT EXISTS idx_task_tags_run ON task_tags(run_id);
 
     CREATE TABLE IF NOT EXISTS sync_watermarks (
       table_name    TEXT PRIMARY KEY,
@@ -138,6 +140,12 @@ function migrate(db: Database.Database): void {
         ON otel_metrics(session_id, name, timestamp, json_extract(attributes, '$.type'));
     `);
   } catch { /* index already exists */ }
+
+  const taskTagCols = db.prepare("PRAGMA table_info(task_tags)").all() as { name: string }[];
+  if (!taskTagCols.some(c => c.name === "run_id")) {
+    db.exec("ALTER TABLE task_tags ADD COLUMN run_id TEXT");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_task_tags_run ON task_tags(run_id)");
+  }
 }
 
 export type SessionRow = {
@@ -219,4 +227,5 @@ export type TaskTagRow = {
   turn_id: number;
   task: string;
   tagged_at: string;
+  run_id: string | null;
 };
