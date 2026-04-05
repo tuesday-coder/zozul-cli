@@ -11,6 +11,7 @@
   "scripts": {
     "build": "./node_modules/.bin/tsc && cp src/dashboard/index.html dist/dashboard/index.html",
     "dev": "tsx src/index.ts",
+    "dev:serve": "tsx src/index.ts serve --dev --verbose",
     "start": "node dist/index.js",
     "test": "vitest run"
   },

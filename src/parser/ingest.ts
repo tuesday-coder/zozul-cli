@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { SessionRepo } from "../storage/repo.js";
 import { discoverSessionFiles, parseSessionFile, type DiscoveredFile } from "./jsonl.js";
 import type { ParsedSession } from "./types.js";
@@ -115,8 +116,9 @@ function persistSession(repo: SessionRepo, parsed: ParsedSession, opts: { noTag?
         return turnTime >= contextTime;
       });
       if (eligibleIds.length > 0) {
+        const runId = randomUUID();
         for (const tag of context.active) {
-          repo.tagTurnsBatch(eligibleIds, tag);
+          repo.tagTurnsBatch(eligibleIds, tag, runId);
         }
       }
     }

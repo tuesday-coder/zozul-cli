@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { getDb } from "../storage/db.js";
 import { SessionRepo } from "../storage/repo.js";
 import { createHookServer } from "../hooks/server.js";
+import { resolveDevBackend, resolveProdBackend, applyDevModeEnv } from "./backend-config.js";
 import { installHooksToSettings, uninstallHooksFromSettings, generateHooksConfig } from "../hooks/config.js";
 import { installOtelToSettings, uninstallOtelFromSettings, generateOtelShellExports } from "../otel/config.js";
 import { ingestAllSessions } from "../parser/ingest.js";
@@ -69,6 +70,7 @@ function doInstall(opts: InstallOpts): void {
 interface ServeOpts {
   port: number;
   verbose?: boolean;
+  dev?: boolean;
 }
 
 function doServe(opts: ServeOpts): Promise<void> {
@@ -76,9 +78,9 @@ function doServe(opts: ServeOpts): Promise<void> {
     const db = getDb(envDbPath());
     const repo = new SessionRepo(db);
 
-    const apiUrl = process.env.ZOZUL_API_URL;
-    const apiKey = process.env.ZOZUL_API_KEY;
-    const syncClient = apiUrl && apiKey ? new ZozulApiClient({ apiUrl, apiKey }) : undefined;
+    let backend = opts.dev ? resolveDevBackend() : resolveProdBackend();
+    if (opts.dev) applyDevModeEnv();
+    const syncClient = backend ? new ZozulApiClient(backend) : undefined;
 
     const server = createHookServer({ port: opts.port, repo, verbose: opts.verbose ?? false, syncClient });
 
@@ -144,9 +146,10 @@ export function buildCli(): Command {
     .description("Start the hooks HTTP server to receive real-time events from Claude Code")
     .option("-p, --port <port>", "Port to listen on", envPort())
     .option("-v, --verbose", "Print events to stderr as they arrive")
+    .option("--dev", "Sync to local dev backend (localhost:8000)")
     .action(async (opts) => {
       const port = parseInt(opts.port, 10);
-      await doServe({ port, verbose: opts.verbose || envVerbose() });
+      await doServe({ port, verbose: opts.verbose || envVerbose(), dev: opts.dev });
     });
 
   program
@@ -158,6 +161,7 @@ export function buildCli(): Command {
     .option("--no-otel", "Skip OTEL configuration")
     .option("--no-hooks", "Skip hooks configuration")
     .option("--service", "Also install zozul as a background service (starts on login)")
+    .option("--dev", "Point the background service at local backend (localhost:8000)")
     .option("--status", "Show background service status")
     .option("--restart", "Restart the background service")
     .option("--dry-run", "Print the config that would be installed without writing")
@@ -199,7 +203,7 @@ export function buildCli(): Command {
 
       if (opts.service) {
         try {
-          const result = installService({ port, dbPath: envDbPath() });
+          const result = installService({ port, dbPath: envDbPath(), dev: opts.dev });
           console.log(`Service installed: ${result.servicePath}`);
           console.log("  zozul is now running in the background and will start automatically on login.");
         } catch (err) {
@@ -259,7 +263,7 @@ export function buildCli(): Command {
           console.log("No tasks found.");
         } else {
           for (const t of tasks) {
-            console.log(`  ${t.task}  (${t.turn_count} turns, last tagged: ${t.last_tagged})`);
+            console.log(`  ${t.task}  (${t.turn_count} turns, last seen: ${t.last_seen})`);
           }
         }
         db.close();
@@ -287,20 +291,21 @@ export function buildCli(): Command {
   program
     .command("sync")
     .description("Sync local data to the remote zozul backend")
+    .option("--dev", "Sync to local dev backend (localhost:8000)")
     .option("--dry-run", "Show what would be synced without sending data")
     .option("-v, --verbose", "Print detailed progress")
     .action(async (opts) => {
-      const apiUrl = process.env.ZOZUL_API_URL;
-      const apiKey = process.env.ZOZUL_API_KEY;
+      const backend = opts.dev ? resolveDevBackend() : resolveProdBackend();
 
-      if (!apiUrl || !apiKey) {
+      if (!backend) {
         console.error("Missing required environment variables:");
-        if (!apiUrl) console.error("  ZOZUL_API_URL — base URL of the zozul backend");
-        if (!apiKey) console.error("  ZOZUL_API_KEY — API key for authentication");
-        console.error("\nSet them in .env or export them in your shell.");
+        console.error("  ZOZUL_API_URL — base URL of the zozul backend");
+        console.error("  ZOZUL_API_KEY — API key for authentication");
+        console.error("\nSet them in .env or export them in your shell, or use --dev for local.");
         process.exit(1);
       }
 
+      const { apiUrl, apiKey } = backend;
       const db = getDb(envDbPath());
       const repo = new SessionRepo(db);
       const client = new ZozulApiClient({ apiUrl, apiKey });
