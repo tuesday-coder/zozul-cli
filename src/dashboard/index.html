@@ -1279,7 +1279,7 @@ async function loadSummary() {
     renderSummaryStats({
       totalCost: stats.total_cost_usd ?? 0,
       totalTokens,
-      totalSessions: stats.total_sessions ?? 0,
+      totalTurns: stats.total_user_turns ?? 0,
       totalTasks: tasks.length ?? 0,
     });
     renderUsageChart(costSeries, tokenSeries);
@@ -1408,7 +1408,7 @@ function renderSummaryStats(s) {
     : { label: 'Total Cost', value: fmtCost(s.totalCost) };
   grid.innerHTML = [
     { label: primary.label, value: primary.value, hero: true },
-    { label: 'Total Sessions', value: fmtNum(s.totalSessions), hero: true },
+    { label: 'Turns', value: fmtNum(s.totalTurns), hero: true },
     { label: 'Total Tasks', value: fmtNum(s.totalTasks), hero: true },
   ].map(c =>
     '<div class="stat-card' + (c.hero ? ' hero' : '') + '">' +
